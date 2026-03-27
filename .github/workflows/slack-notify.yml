@@ -2,7 +2,7 @@ name: Slack Algorithm Study Reminder
 
 on:
   schedule:
-    - cron: '0 0 * * 1-5'  # KST 오전 9시 (UTC 00:00), 평일(월~금)
+    - cron: '50 23 * * 0-4'  # KST 오전 8시 50분 (UTC 전날 23:50), 평일(월~금 KST = 일~목 UTC)
   workflow_dispatch:  # 수동 실행도 가능하도록
 
 jobs:
