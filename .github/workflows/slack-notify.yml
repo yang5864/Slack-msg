@@ -1,27 +1,25 @@
 name: Slack Algorithm Study Reminder
 
 on:
-  schedule:
-    - cron: '50 23 * * 0-4'  # KST 오전 8시 50분 (UTC 전날 23:50), 평일(월~금 KST = 일~목 UTC)
-  workflow_dispatch:  # 수동 실행도 가능하도록
+    workflow_dispatch: # 수동 실행도 가능하도록
 
 jobs:
-  notify:
-    runs-on: ubuntu-latest
+    notify:
+        runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install requests
+            - name: Install dependencies
+              run: pip install requests
 
-      - name: Send Slack notification
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: python send_slack.py
+            - name: Send Slack notification
+              env:
+                  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+              run: python send_slack.py
