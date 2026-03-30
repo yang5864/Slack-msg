@@ -1,0 +1,27 @@
+name: Slack Missing Check
+
+on:
+    workflow_dispatch: # cron-job.org에서 찌를 수 있도록 수동 실행 열어두기
+
+jobs:
+    check-and-notify:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v3
+
+            - name: Set up Python
+              uses: actions/setup-python@v4
+              with:
+                  python-version: '3.9'
+
+            - name: Install dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install requests pytz
+
+            - name: Run check script
+              env:
+                  SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+                  SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+              run: python check_slack.py
