@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 # 1. 깃허브 시크릿(환경 변수)에서 토큰과 채널 ID 가져오기
@@ -30,10 +30,15 @@ MEMBERS = {
     "U0AFNU32D8T": "황지원",
 }
 
-# 3. 한국 시간(KST) 기준으로 오늘 날짜 포맷팅
+# 3. 한국 시간(KST) 기준으로 어제 날짜 포맷팅 (체크봇은 다음날 아침에 실행되므로)
 kst = pytz.timezone('Asia/Seoul')
-today = datetime.now(kst)
-today_str = today.strftime("%m월 %d일")
+now = datetime.now(kst)
+yesterday = now - timedelta(days=1)
+yesterday_str = yesterday.strftime("%m월 %d일")
+
+# 어제 오전 9시 타임스탬프 (인증 글이 올라오는 시각 기준으로 탐색 범위 제한)
+yesterday_9am = yesterday.replace(hour=9, minute=0, second=0, microsecond=0)
+oldest_ts = str(yesterday_9am.timestamp())
 
 # API 요청 시 사용할 공통 헤더
 headers = {
@@ -46,7 +51,8 @@ def check_and_notify():
     url_history = "https://slack.com/api/conversations.history"
     params_history = {
         "channel": CHANNEL_ID,
-        "limit": 50  # 최근 50개 메시지 탐색
+        "limit": 200,
+        "oldest": oldest_ts  # 어제 9시 이후 메시지만 탐색
     }
     
     res_history = requests.get(url_history, headers=headers, params=params_history).json()
@@ -55,7 +61,7 @@ def check_and_notify():
     if res_history.get("ok"):
         for msg in res_history["messages"]:
             # 메시지 내용 중에 "오늘의 인증!" 이라는 키워드가 있으면 부모 글로 인식
-            if "오늘의 인증!" in msg.get("text", ""):
+            if "오늘의 인증!" in msg.get("text", "") and yesterday_str in msg.get("text", ""):
                 target_ts = msg["ts"]
                 break
 
@@ -92,10 +98,10 @@ def check_and_notify():
     url_post = "https://slack.com/api/chat.postMessage"
     
     if not missing_users: # 미제출자가 0명일 때 (전원 제출)
-        result_text = f"🎉 *{today_str} 인증 마감* 🎉\n전원 인증 완료! 모두 수고하셨습니다. 오늘 하루도 화이팅! 🚀"
+        result_text = f"🎉 *{yesterday_str} 인증 마감* 🎉\n전원 인증 완료! 모두 수고하셨습니다. 오늘 하루도 화이팅! 🚀"
     else: # 미제출자가 있을 때
         mentions = ", ".join(missing_users)
-        result_text = f"🚨 *{today_str} 인증 마감* 🚨\n{mentions} 님, 아직 인증되지 않았습니다. 벌금 입금 부탁드립니다! 💸"
+        result_text = f"🚨 *{yesterday_str} 인증 마감* 🚨\n{mentions} 님, 아직 인증되지 않았습니다. 벌금 입금 부탁드립니다! 💸"
 
     payload_post = {
         "channel": CHANNEL_ID,
