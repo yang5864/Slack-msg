@@ -60,15 +60,22 @@ def send_midnight_report():
     submitted_names = sorted(list(set(submitted_names)))
     count = len(submitted_names)
 
-    # Step C: 메시지 구성 및 전송
-    result_text = (
-        f"🌙 *{today_str} 인증 중간 점검 (자정)* 🌙\n"
-        f"현재까지 총 *{count}명* 제출하셨습니다!\n\n"
-        f"✅ *제출자 명단:*\n{', '.join(submitted_names) if submitted_names else '아직 없습니다 🥲'}\n\n"
-        f"⏰ 마감까지 9시간 남았습니다. 아직 안 하신 분들은 서둘러주세요! 🔥"
-    )
+    # Step C: 메시지 구성 및 전송 (채널로 바로 발송!)
+    if count == len(MEMBERS):
+        result_text = (
+            f"🎉 *[{today_str} 분량] 전원 인증 완료 (조기 종료)* 🎉\n"
+            f"모든 분들이 자정 전에 제출을 완료하셨습니다! 폼 미쳤다! 👏\n"
+            f"내일 아침 마감 알림은 생략됩니다. 모두 푹 주무세요! 🌙"
+        )
+    else:
+        result_text = (
+            f"🌙 *[{today_str} 분량] 인증 중간 점검 (자정)* 🌙\n"
+            f"현재까지 총 *{count}명* 제출하셨습니다!\n\n"
+            f"✅ *제출자 명단:*\n{', '.join(submitted_names) if submitted_names else '아직 없습니다 🥲'}\n\n"
+            f"⏰ 마감까지 9시간 남았습니다. 아직 안 하신 분들은 서둘러주세요! 🔥"
+        )
 
-    requests.post("https://slack.com/api/chat.postMessage", 
+    requests.post("https://slack.com/api/chat.postMessage",
                   headers=headers, data={"channel": CHANNEL_ID, "text": result_text})
 
 if __name__ == "__main__":

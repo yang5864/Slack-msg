@@ -75,9 +75,9 @@ def check_and_notify():
         "channel": CHANNEL_ID,
         "ts": target_ts
     }
-    
+
     res_replies = requests.get(url_replies, headers=headers, params=params_replies).json()
-    
+
     submitted_users = set()
     if res_replies.get("ok"):
         for reply in res_replies["messages"]:
@@ -92,24 +92,20 @@ def check_and_notify():
     missing_users = []
     for user_id, name in MEMBERS.items():
         if user_id not in submitted_users:
-            missing_users.append(f"<@{user_id}>")  # <@ID> 포맷으로 쓰면 슬랙에서 태그(@)됨
+            missing_users.append(f"<@{user_id}>")
 
     # Step D: 결과에 따라 슬랙으로 메시지 전송
-    url_post = "https://slack.com/api/chat.postMessage"
+    if not missing_users:
+        # 🌟 미제출자가 0명(전원 제출)이면 슬랙에 아무 말도 안 하고 그냥 스크립트 종료!
+        print("전원 제출 확인 완료. 아침 알림 없이 쿨하게 종료합니다.")
+        return 
     
-    if not missing_users: # 미제출자가 0명일 때 (전원 제출)
-        result_text = f"🎉 *{yesterday_str} 인증 마감* 🎉\n전원 인증 완료! 모두 수고하셨습니다. 오늘 하루도 화이팅! 🚀"
-    else: # 미제출자가 있을 때
-        mentions = ", ".join(missing_users)
-        result_text = f"🚨 *{yesterday_str} 인증 마감* 🚨\n{mentions} 님, 아직 인증되지 않았습니다. 벌금 입금 부탁드립니다! 💸"
+    # 미제출자가 있을 때만 독촉 발송
+    mentions = ", ".join(missing_users)
+    result_text = f"🚨 *[{yesterday_str} 분량] 인증 마감* 🚨\n{mentions} 님, 마감 시간(09:00)이 지났습니다. 벌금 입금 부탁드립니다! \n카카오뱅크 `3333-32-8918252`"
 
-    payload_post = {
-        "channel": CHANNEL_ID,
-        "text": result_text
-    }
-    
-    requests.post(url_post, headers=headers, data=payload_post)
-    print("검사 및 알림 전송 완료!")
+    requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": result_text})
+    print("검사 및 독촉 알림 전송 완료!")
 
 if __name__ == "__main__":
     check_and_notify()
