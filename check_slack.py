@@ -46,6 +46,20 @@ headers = {
     "Content-Type": "application/x-www-form-urlencoded"
 }
 
+def format_submit_time(ts: float) -> str:
+    """unix timestamp → '어제 오후 2시' / '오늘 오전 8시 58분' 형식"""
+    dt = datetime.fromtimestamp(ts, tz=kst)
+    if dt.date() == yesterday.date():
+        day_label = "어제"
+    else:
+        day_label = "오늘"
+    ampm = "오전" if dt.hour < 12 else "오후"
+    hour = dt.hour if dt.hour <= 12 else dt.hour - 12
+    if dt.minute == 0:
+        return f"{day_label} {ampm} {hour}시"
+    return f"{day_label} {ampm} {hour}시 {dt.minute}분"
+
+
 def check_and_notify():
     # Step A: 오늘 아침에 올라온 '오늘의 인증!' 부모 메시지 찾기
     url_history = "https://slack.com/api/conversations.history"
@@ -79,6 +93,7 @@ def check_and_notify():
     res_replies = requests.get(url_replies, headers=headers, params=params_replies).json()
 
     submitted_users = set()
+    replies_with_ts = []  # (ts, user_id) 튜플 리스트
     if res_replies.get("ok"):
         for reply in res_replies["messages"]:
             # 부모 메시지 자체는 제외하고, 댓글 단 사람들의 ID만 수집
@@ -87,6 +102,7 @@ def check_and_notify():
             user_id = reply.get("user")
             if user_id:
                 submitted_users.add(user_id)
+                replies_with_ts.append((float(reply["ts"]), user_id))
 
     # Step C: 스터디원 전체 명단과 비교하여 미제출자 색출
     missing_users = []
@@ -96,9 +112,20 @@ def check_and_notify():
 
     # Step D: 결과에 따라 슬랙으로 메시지 전송
     if not missing_users:
-        # 🌟 미제출자가 0명(전원 제출)이면 슬랙에 아무 말도 안 하고 그냥 스크립트 종료!
-        print("전원 제출 확인 완료. 아침 알림 없이 쿨하게 종료합니다.")
-        return 
+        # 🌟 미제출자가 0명(전원 제출)이면 격려 + 최초/최후 제출자 칭호 메시지 발송
+        replies_with_ts.sort(key=lambda x: x[0])
+        first_ts, first_id = replies_with_ts[0]
+        last_ts, last_id = replies_with_ts[-1]
+
+        cheer_text = (
+            f"🎉 *[{yesterday_str} 분량] 전원 제출 완료!* 🎉\n"
+            f"모두 고생 많으셨습니다! 오늘 하루도 화이팅입니다 💪\n\n"
+            f"🥇 *오늘의 얼리버드*: <@{first_id}> 님 ({format_submit_time(first_ts)} 제출)\n"
+            f"🏃‍♂️ *오늘의 막차 탑승객*: <@{last_id}> 님 ({format_submit_time(last_ts)} 제출 ㄷㄷ)"
+        )
+        requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": cheer_text})
+        print("전원 제출 확인 완료. 격려 메시지 전송!")
+        return
     
     # 미제출자가 있을 때만 독촉 발송
     mentions = ", ".join(missing_users)
