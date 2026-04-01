@@ -54,7 +54,7 @@ def format_submit_time(ts: float) -> str:
     else:
         day_label = "오늘"
     ampm = "오전" if dt.hour < 12 else "오후"
-    hour = dt.hour if dt.hour <= 12 else dt.hour - 12
+    hour = dt.hour % 12 or 12
     if dt.minute == 0:
         return f"{day_label} {ampm} {hour}시"
     return f"{day_label} {ampm} {hour}시 {dt.minute}분"
@@ -83,6 +83,17 @@ def check_and_notify():
         print("오늘의 인증 글을 찾지 못했습니다.")
         return
 
+    # Step B-0: midnight_report가 이미 조기 종료 선언했는지 확인
+    # - "조기 종료" + yesterday_str 두 조건 모두 충족해야 유효 (다른 날짜 오탐 방지)
+    # - 감지되면 생략이 아니라 Step D(전원 격려 메시지)로 이어짐
+    already_closed = False
+    if res_history.get("ok"):
+        for msg in res_history["messages"]:
+            text = msg.get("text", "")
+            if "조기 종료" in text and yesterday_str in text:
+                already_closed = True
+                break
+
     # Step B: 찾은 부모 메시지에 달린 스레드(댓글) 목록 가져오기
     url_replies = "https://slack.com/api/conversations.replies"
     params_replies = {
@@ -100,15 +111,20 @@ def check_and_notify():
             if reply["ts"] == target_ts:
                 continue
             user_id = reply.get("user")
-            if user_id:
+            if user_id and user_id in MEMBERS:
                 submitted_users.add(user_id)
                 replies_with_ts.append((float(reply["ts"]), user_id))
 
     # Step C: 스터디원 전체 명단과 비교하여 미제출자 색출
-    missing_users = []
-    for user_id, name in MEMBERS.items():
-        if user_id not in submitted_users:
-            missing_users.append(f"<@{user_id}>")
+    # already_closed == True 이면 자정에 전원 제출이 확인된 것이므로 미제출자 없음으로 처리
+    if already_closed:
+        missing_users = []
+        print("자정 조기 종료 확인됨. 전원 제출로 처리.")
+    else:
+        missing_users = []
+        for user_id, name in MEMBERS.items():
+            if user_id not in submitted_users:
+                missing_users.append(f"<@{user_id}>")
 
     # Step D: 결과에 따라 슬랙으로 메시지 전송
     if not missing_users:
@@ -129,7 +145,7 @@ def check_and_notify():
     
     # 미제출자가 있을 때만 독촉 발송
     mentions = ", ".join(missing_users)
-    result_text = f"🚨 *[{yesterday_str} 분량] 인증 마감* 🚨\n{mentions} 님, 마감 시간(09:00)이 지났습니다. 벌금 입금 부탁드립니다! \n카카오뱅크 `3333-32-8918252`"
+    result_text = f"🚨 *[{yesterday_str} 분량] 인증 마감* 🚨\n{mentions} 님, 마감 시간(08:59)이 지났습니다. 벌금 입금 부탁드립니다! \n카카오뱅크 `3333-32-8918252`"
 
     requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": result_text})
     print("검사 및 독촉 알림 전송 완료!")

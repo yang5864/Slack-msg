@@ -13,7 +13,7 @@ now = datetime.now(kst)
 today_str = now.strftime("%m월 %d일")
 
 # 3. 슬랙으로 보낼 메시지
-message = f"🔥 *[{today_str}] 오늘의 인증!* 여기에 스레드(댓글)로 오늘 푼 알고리즘을 인증해 주세요!"
+message = f"🔥 *[{today_str}] 오늘의 인증!*\n여기에 스레드(댓글)로 오늘 푼 알고리즘을 인증해 주세요!"
 
 # 4. 알고봇 토큰을 이용해 메시지 전송
 url = "https://slack.com/api/chat.postMessage"
