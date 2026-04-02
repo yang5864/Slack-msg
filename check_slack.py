@@ -93,7 +93,7 @@ def get_solved_ac_info(problem_id: int):
             "tier_str": tier_str,
             "converted_score": converted_score,
             "title": title,
-            "accepted_user_count": data.get("acceptedUserCount"),
+            "average_tries": data.get("averageTries"),
         }
     except Exception as e:
         print(f"[Solved.ac 조회 실패] problemId={problem_id}, error={e}")
@@ -172,10 +172,10 @@ def analyze_problem(data):
                 if solved_info:
                     result['original_tier'] = solved_info['tier_str']
                     result['converted_score'] = solved_info['converted_score']
-                    result['accepted_user_count'] = solved_info['accepted_user_count']
+                    result['average_tries'] = solved_info['average_tries']
                     if solved_info['title']:
                         result['problem_name'] = f"{solved_info['title']} ({problem_num}번)"
-                    print(f"[Solved.ac] {problem_num}번 → {solved_info['tier_str']} ({solved_info['converted_score']}점, 정답자 {solved_info['accepted_user_count']}명)")
+                    print(f"[Solved.ac] {problem_num}번 → {solved_info['tier_str']} ({solved_info['converted_score']}점, 평균 시도 {solved_info['average_tries']}회)")
 
         name = MEMBERS.get(user_id, user_id)
         print(f"[분석 결과] {name}: {result.get('problem_name')} ({result.get('platform')} · {result.get('original_tier')}) → {result.get('converted_score')}점")
@@ -210,11 +210,11 @@ def resolve_tie(tied):
     - 그 외    → Gemini 직접 비교 (토너먼트)
     """
     all_boj = all("백준" in r.get("platform", "") for r in tied)
-    has_count = all(r.get("accepted_user_count") is not None for r in tied)
+    has_tries = all(r.get("average_tries") is not None for r in tied)
 
-    if all_boj and has_count:
-        winner = min(tied, key=lambda x: x["accepted_user_count"])
-        print(f"[동점 처리] BOJ 정답자 수 기준 → {winner['problem_name']} ({winner['accepted_user_count']}명) 승")
+    if all_boj and has_tries:
+        winner = max(tied, key=lambda x: x["average_tries"])
+        print(f"[동점 처리] BOJ 평균 시도 횟수 기준 → {winner['problem_name']} ({winner['average_tries']}회) 승")
         return winner
 
     print(f"[동점 처리] Gemini 토너먼트 ({len(tied)}명)")
