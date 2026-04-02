@@ -14,7 +14,7 @@ import json
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-3.1-flash-lite')
+model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
 
 # 2. 스터디원 19명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
 MEMBERS = {
