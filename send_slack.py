@@ -15,7 +15,7 @@ today_str = now.strftime("%m월 %d일")
 # 3. 슬랙으로 보낼 메시지
 message = f"🔥 *[{today_str}] 오늘의 인증!*\n여기에 스레드(댓글)로 오늘 푼 알고리즘을 인증해 주세요!"
 
-# 4. 알고봇 토큰을 이용해 메시지 전송
+# 4. Tetz봇 토큰을 이용해 메시지 전송
 url = "https://slack.com/api/chat.postMessage"
 headers = {
     "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
@@ -29,6 +29,6 @@ payload = {
 response = requests.post(url, headers=headers, data=payload)
 
 if response.status_code == 200 and response.json().get("ok"):
-    print("알고봇으로 아침 알림 전송 완료!")
+    print("Tetz봇으로 아침 알림 전송 완료!")
 else:
     print(f"전송 실패: {response.text}")

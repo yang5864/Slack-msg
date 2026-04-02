@@ -24,4 +24,5 @@ jobs:
               env:
                   SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
                   SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+                  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
               run: python check_slack.py

@@ -1,11 +1,19 @@
 import os
 import requests
+import time
+import concurrent.futures
 from datetime import datetime, timedelta
 import pytz
+import google.generativeai as genai
+from PIL import Image
+from io import BytesIO
+import json
 
 # 1. 깃허브 시크릿(환경 변수)에서 토큰과 채널 ID 가져오기
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+model = genai.GenerativeModel('gemini-3.0-flash')
 
 # 2. 스터디원 19명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
 MEMBERS = {
@@ -40,11 +48,13 @@ yesterday_str = yesterday.strftime("%m월 %d일")
 yesterday_9am = yesterday.replace(hour=9, minute=0, second=0, microsecond=0)
 oldest_ts = str(yesterday_9am.timestamp())
 
-# API 요청 시 사용할 공통 헤더
+# Slack API 요청 시 사용할 공통 헤더
 headers = {
     "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
     "Content-Type": "application/x-www-form-urlencoded"
 }
+# 이미지 다운로드 전용 헤더 (Content-Type 없이 인증만)
+img_headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
 
 def format_submit_time(ts: float) -> str:
     """unix timestamp → '어제 오후 2시' / '오늘 오전 8시 58분' 형식"""
@@ -59,6 +69,60 @@ def format_submit_time(ts: float) -> str:
         return f"{day_label} {ampm} {hour}시"
     return f"{day_label} {ampm} {hour}시 {dt.minute}분"
 
+def analyze_problem(data):
+    """Gemini를 사용한 멀티모달 이미지 분석"""
+    user_id, img_url = data
+    try:
+        response = requests.get(img_url, headers=img_headers)
+        response.raise_for_status()
+        img = Image.open(BytesIO(response.content))
+
+        prompt = """
+        너는 '1일 1알고 스터디'의 냉철한 AI 코딩테스트 난이도 판별사야.
+        첨부된 화면 캡처 이미지를 보고 어느 플랫폼(백준, 프로그래머스, SW Expert Academy 등)의 무슨 문제인지 파악해.
+
+        [난이도 통합 환산 기준 (1~100점)]
+        두 플랫폼의 난이도를 공정하게 비교하기 위해 아래 기준을 따라 절대 점수를 부여해.
+        - 1~20점: 백준 브론즈 / 프로그래머스 Lv.1 (입문자)
+        - 21~40점: 백준 실버 / 프로그래머스 Lv.2 (기본기)
+        - 41~70점: 백준 골드 / 프로그래머스 Lv.3 (실전 코테 수준)
+        - 71~90점: 백준 플래티넘 / 프로그래머스 Lv.4 (고수)
+        - 91~100점: 백준 다이아, 루비 / 프로그래머스 Lv.5 (신)
+        * 같은 티어/레벨 안에서도 문제의 유명도나 체감 난이도를 고려해서 디테일하게 점수를 가감해.
+
+        반드시 아래 JSON 형식으로만 대답해. 마크다운(```json) 없이 순수 JSON 텍스트만 출력해.
+        {
+        "platform": "백준 혹은 프로그래머스",
+        "problem_name": "문제 이름 (번호 포함)",
+        "original_tier": "골드 1, Lv.3 등 원본 플랫폼 기준 난이도",
+        "converted_score": 75,
+        "reason": "이 문제에 이 점수를 부여한 이유 (알고리즘 종류와 체감 난이도를 1문장으로 짧고 유쾌하게 설명)"
+        }
+        """
+        res = model.generate_content([prompt, img])
+        result = json.loads(res.text.strip().replace('```json', '').replace('```', '').strip())
+        result['user_id'] = user_id
+        return result
+    except Exception as e:
+        print(f"[Gemini 분석 실패] user={user_id}, error={e}")
+        return None
+
+def run_gemini_batch(tasks, batch_size=5):
+    """RPM 5 제한을 고려해 batch_size씩 병렬 처리 후 60초 대기"""
+    results = []
+    total_batches = (len(tasks) + batch_size - 1) // batch_size
+    for i in range(0, len(tasks), batch_size):
+        batch = tasks[i:i + batch_size]
+        batch_num = i // batch_size + 1
+        print(f"Gemini 배치 {batch_num}/{total_batches}: {len(batch)}명 분석 중...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
+            batch_results = list(executor.map(analyze_problem, batch))
+        results.extend(batch_results)
+        # 마지막 배치가 아니면 RPM 리셋 대기
+        if i + batch_size < len(tasks):
+            print("RPM 제한 대기 중... (61초)")
+            time.sleep(61)
+    return results
 
 def check_and_notify():
     # Step A: 오늘 아침에 올라온 '오늘의 인증!' 부모 메시지 찾기
@@ -68,13 +132,12 @@ def check_and_notify():
         "limit": 200,
         "oldest": oldest_ts  # 어제 9시 이후 메시지만 탐색
     }
-    
+
     res_history = requests.get(url_history, headers=headers, params=params_history).json()
-    
+
     target_ts = None
     if res_history.get("ok"):
         for msg in res_history["messages"]:
-            # 메시지 내용 중에 "오늘의 인증!" 이라는 키워드가 있으면 부모 글로 인식
             if "오늘의 인증!" in msg.get("text", "") and yesterday_str in msg.get("text", ""):
                 target_ts = msg["ts"]
                 break
@@ -104,7 +167,9 @@ def check_and_notify():
     res_replies = requests.get(url_replies, headers=headers, params=params_replies).json()
 
     submitted_users = set()
-    replies_with_ts = []  # (ts, user_id) 튜플 리스트
+    replies_with_ts = []   # (ts, user_id) 튜플 리스트
+    user_images = {}       # user_id -> img_url (멤버당 첫 번째 이미지만)
+
     if res_replies.get("ok"):
         for reply in res_replies["messages"]:
             # 부모 메시지 자체는 제외하고, 댓글 단 사람들의 ID만 수집
@@ -114,6 +179,14 @@ def check_and_notify():
             if user_id and user_id in MEMBERS:
                 submitted_users.add(user_id)
                 replies_with_ts.append((float(reply["ts"]), user_id))
+                # 이미지 첨부 수집 (멤버당 첫 번째 이미지만)
+                if user_id not in user_images:
+                    for f in reply.get("files", []):
+                        if f.get("mimetype", "").startswith("image/"):
+                            url = f.get("url_private_download") or f.get("url_private")
+                            if url:
+                                user_images[user_id] = url
+                            break
 
     # Step C: 스터디원 전체 명단과 비교하여 미제출자 색출
     # already_closed == True 이면 자정에 전원 제출이 확인된 것이므로 미제출자 없음으로 처리
@@ -121,10 +194,34 @@ def check_and_notify():
         missing_users = []
         print("자정 조기 종료 확인됨. 전원 제출로 처리.")
     else:
-        missing_users = []
-        for user_id, name in MEMBERS.items():
-            if user_id not in submitted_users:
-                missing_users.append(f"<@{user_id}>")
+        missing_users = [
+            f"<@{uid}>" for uid, name in MEMBERS.items()
+            if uid not in submitted_users
+        ]
+
+    # Step D-0: Gemini 알고리즘 마스터 선정 (이미지를 첨부한 제출자 대상)
+    master_block = ""
+    analysis_tasks = list(user_images.items())  # [(user_id, img_url), ...]
+    if analysis_tasks:
+        print(f"Gemini 분석 시작: {len(analysis_tasks)}명")
+        analysis_results = run_gemini_batch(analysis_tasks)
+        valid_results = [r for r in analysis_results if r is not None]
+
+        if valid_results:
+            best = max(valid_results, key=lambda x: x.get("converted_score", 0))
+            winner_id = best["user_id"]
+            winner_name = MEMBERS.get(winner_id, "알 수 없음")
+            master_block = (
+                f"\n\n🏆 *오늘의 알고리즘 마스터: {winner_name}* (<@{winner_id}>)\n"
+                f"📚 `{best['problem_name']}` ({best['platform']} · {best['original_tier']})\n"
+                f"💯 난이도 점수: *{best['converted_score']}점*\n"
+                f"💬 {best['reason']}"
+            )
+            print(f"알고리즘 마스터 선정: {winner_name} ({best['converted_score']}점)")
+        else:
+            print("Gemini 분석 결과 없음. 마스터 선정 생략.")
+    else:
+        print("이미지 첨부 없음. 마스터 선정 생략.")
 
     # Step D: 결과에 따라 슬랙으로 메시지 전송
     if not missing_users:
@@ -137,16 +234,21 @@ def check_and_notify():
             f"🎉 *[{yesterday_str} 분량] 전원 제출 완료!* 🎉\n"
             f"모두 고생 많으셨습니다! 오늘 하루도 화이팅입니다 💪\n\n"
             f"🥇 *오늘의 얼리버드*: <@{first_id}> 님 ({format_submit_time(first_ts)} 제출)\n"
-            f"🏃‍♂️ *오늘의 막차 탑승객*: <@{last_id}> 님 ({format_submit_time(last_ts)} 제출 ㄷㄷ)"
+            f"🏃 *오늘의 막차 탑승객*: <@{last_id}> 님 ({format_submit_time(last_ts)} 제출 ㄷㄷ)"
+            + master_block
         )
         requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": cheer_text})
         print("전원 제출 확인 완료. 격려 메시지 전송!")
         return
-    
-    # 미제출자가 있을 때만 독촉 발송
-    mentions = ", ".join(missing_users)
-    result_text = f"🚨 *[{yesterday_str} 분량] 인증 마감* 🚨\n{mentions} 님, 마감 시간(08:59)이 지났습니다. 벌금 입금 부탁드립니다! \n카카오뱅크 `3333-32-8918252`"
 
+    # 미제출자가 있을 때 독촉 발송
+    mentions = ", ".join(missing_users)
+    result_text = (
+        f"🚨 *[{yesterday_str} 분량] 인증 마감* 🚨\n"
+        f"{mentions} 님, 마감 시간(08:59)이 지났습니다. 벌금 입금 부탁드립니다!\n"
+        f"카카오뱅크 `3333-32-8918252`"
+        + master_block
+    )
     requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": result_text})
     print("검사 및 독촉 알림 전송 완료!")
 
