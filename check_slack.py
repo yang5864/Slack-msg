@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import time
 import concurrent.futures
@@ -56,6 +57,48 @@ headers = {
 # 이미지 다운로드 전용 헤더 (Content-Type 없이 인증만)
 img_headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
 
+# Solved.ac 티어 변환 테이블
+# level 1-5: 브론즈 5~1 / 6-10: 실버 5~1 / 11-15: 골드 5~1
+# 16-20: 플래티넘 5~1 / 21-25: 다이아 5~1 / 26-30: 루비 5~1
+_TIER_KR = ["브론즈", "실버", "골드", "플래티넘", "다이아", "루비"]
+_SCORE_RANGES = [(1, 20), (21, 40), (41, 70), (71, 90), (91, 97), (98, 100)]
+
+def get_solved_ac_info(problem_id: int) -> dict | None:
+    """Solved.ac API로 백준 문제 실제 난이도 조회"""
+    try:
+        res = requests.get(
+            "https://solved.ac/api/v3/problem/show",
+            params={"problemId": problem_id},
+            headers={"Accept": "application/json"},
+            timeout=5
+        )
+        if res.status_code != 200:
+            return None
+        data = res.json()
+        level = data.get("level", 0)
+        title = data.get("titleKo") or data.get("title", "")
+
+        if level == 0:
+            return {"tier_str": "Unrated", "converted_score": 5, "title": title}
+
+        tier_idx = (level - 1) // 5       # 0=브론즈 ... 5=루비
+        sub = 5 - ((level - 1) % 5)       # 5=쉬움, 1=어려움 (티어 내)
+        tier_str = f"{_TIER_KR[tier_idx]} {sub}"
+
+        base, top = _SCORE_RANGES[tier_idx]
+        sub_pos = (level - 1) % 5         # 0=티어 내 최하, 4=티어 내 최상
+        converted_score = round(base + (top - base) * sub_pos / 4)
+
+        return {"tier_str": tier_str, "converted_score": converted_score, "title": title}
+    except Exception as e:
+        print(f"[Solved.ac 조회 실패] problemId={problem_id}, error={e}")
+        return None
+
+def extract_boj_number(problem_name: str) -> int | None:
+    """문제 이름 문자열에서 백준 문제 번호(4~5자리) 추출"""
+    match = re.search(r'\b(\d{4,5})\b', problem_name)
+    return int(match.group(1)) if match else None
+
 def format_submit_time(ts: float) -> str:
     """unix timestamp → '어제 오후 2시' / '오늘 오전 8시 58분' 형식"""
     dt = datetime.fromtimestamp(ts, tz=kst)
@@ -102,6 +145,20 @@ def analyze_problem(data):
         res = model.generate_content([prompt, img])
         result = json.loads(res.text.strip().replace('```json', '').replace('```', '').strip())
         result['user_id'] = user_id
+
+        # 백준이면 Solved.ac API로 실제 난이도 보정 (Gemini 환각 방지)
+        # 프로그래머스는 공개 API 없으므로 Gemini 평가 그대로 사용
+        if "백준" in result.get("platform", ""):
+            problem_num = extract_boj_number(result.get("problem_name", ""))
+            if problem_num:
+                solved_info = get_solved_ac_info(problem_num)
+                if solved_info:
+                    result['original_tier'] = solved_info['tier_str']
+                    result['converted_score'] = solved_info['converted_score']
+                    if solved_info['title']:
+                        result['problem_name'] = f"{solved_info['title']} ({problem_num}번)"
+                    print(f"[Solved.ac] {problem_num}번 → {solved_info['tier_str']} ({solved_info['converted_score']}점)")
+
         return result
     except Exception as e:
         print(f"[Gemini 분석 실패] user={user_id}, error={e}")
