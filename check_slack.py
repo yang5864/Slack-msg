@@ -95,8 +95,10 @@ def get_solved_ac_info(problem_id: int):
         return None
 
 def extract_boj_number(problem_name: str):
-    """문제 이름 문자열에서 백준 문제 번호(4~5자리) 추출"""
-    match = re.search(r'\b(\d{4,5})\b', problem_name)
+    """문제 이름 문자열에서 백준 문제 번호(4~5자리) 추출
+    \b는 Python 3 유니코드 모드에서 한글을 \w로 취급해 '2178번'에서 매칭 실패함.
+    숫자 앞뒤에 다른 숫자가 없는 조건으로 대체."""
+    match = re.search(r'(?<!\d)(\d{4,5})(?!\d)', problem_name)
     return int(match.group(1)) if match else None
 
 def format_submit_time(ts: float) -> str:
