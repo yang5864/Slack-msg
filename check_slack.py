@@ -335,6 +335,14 @@ def check_and_notify():
                 f"💯 난이도 점수: *{best['converted_score']}점*\n"
                 f"💬 {best['reason']}"
             )
+            # 공동 1등 언급 (winner 제외 나머지)
+            runners_up = [r for r in tied if r["user_id"] != winner_id]
+            if runners_up:
+                mentions = ", ".join(
+                    f"<@{r['user_id']}> (`{r['problem_name']}`)"
+                    for r in runners_up
+                )
+                master_block += f"\n\n🥈 *아깝게 탈락한 공동 1등*: {mentions}"
             print(f"알고리즘 마스터 선정: {winner_name} ({best['converted_score']}점)")
         else:
             print("Gemini 분석 결과 없음. 마스터 선정 생략.")
