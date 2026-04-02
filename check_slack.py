@@ -63,7 +63,7 @@ img_headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
 _TIER_KR = ["브론즈", "실버", "골드", "플래티넘", "다이아", "루비"]
 _SCORE_RANGES = [(1, 20), (21, 40), (41, 70), (71, 90), (91, 97), (98, 100)]
 
-def get_solved_ac_info(problem_id: int) -> dict | None:
+def get_solved_ac_info(problem_id: int):
     """Solved.ac API로 백준 문제 실제 난이도 조회"""
     try:
         res = requests.get(
@@ -94,7 +94,7 @@ def get_solved_ac_info(problem_id: int) -> dict | None:
         print(f"[Solved.ac 조회 실패] problemId={problem_id}, error={e}")
         return None
 
-def extract_boj_number(problem_name: str) -> int | None:
+def extract_boj_number(problem_name: str):
     """문제 이름 문자열에서 백준 문제 번호(4~5자리) 추출"""
     match = re.search(r'\b(\d{4,5})\b', problem_name)
     return int(match.group(1)) if match else None
