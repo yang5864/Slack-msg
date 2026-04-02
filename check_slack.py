@@ -14,7 +14,7 @@ import json
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-2.5-flash')
+model = genai.GenerativeModel('gemini-3.1-flash-lite')
 
 # 2. 스터디원 19명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
 MEMBERS = {
@@ -124,6 +124,11 @@ def analyze_problem(data):
         너는 '1일 1알고 스터디'의 냉철한 AI 코딩테스트 난이도 판별사야.
         첨부된 화면 캡처 이미지를 보고 어느 플랫폼(백준, 프로그래머스, SW Expert Academy 등)의 무슨 문제인지 파악해.
 
+        🚨 [절대 규칙: 환각(Hallucination) 금지!] 🚨
+        1. 문제의 티어(난이도)를 너의 배경지식으로 절대 추측하거나 지어내지 마.
+        2. 반드시 화면에 텍스트로 적혀 있는 티어(예: Silver III, 브론즈 1)나 아이콘의 색상을 있는 그대로 정확하게 읽어.
+        3. 팩트 기반으로 확인된 티어만 'original_tier'에 적어.
+
         [난이도 통합 환산 기준 (1~100점)]
         두 플랫폼의 난이도를 공정하게 비교하기 위해 아래 기준을 따라 절대 점수를 부여해.
         - 1~20점: 백준 브론즈 / 프로그래머스 Lv.1 (입문자)
@@ -164,7 +169,7 @@ def analyze_problem(data):
         print(f"[Gemini 분석 실패] user={user_id}, error={e}")
         return None
 
-def run_gemini_batch(tasks, batch_size=5):
+def run_gemini_batch(tasks, batch_size=10):
     """RPM 5 제한을 고려해 batch_size씩 병렬 처리 후 60초 대기"""
     results = []
     total_batches = (len(tasks) + batch_size - 1) // batch_size
