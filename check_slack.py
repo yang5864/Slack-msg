@@ -89,7 +89,12 @@ def get_solved_ac_info(problem_id: int):
         sub_pos = (level - 1) % 5         # 0=티어 내 최하, 4=티어 내 최상
         converted_score = round(base + (top - base) * sub_pos / 4)
 
-        return {"tier_str": tier_str, "converted_score": converted_score, "title": title}
+        return {
+            "tier_str": tier_str,
+            "converted_score": converted_score,
+            "title": title,
+            "accepted_user_count": data.get("acceptedUserCount"),
+        }
     except Exception as e:
         print(f"[Solved.ac 조회 실패] problemId={problem_id}, error={e}")
         return None
@@ -167,9 +172,10 @@ def analyze_problem(data):
                 if solved_info:
                     result['original_tier'] = solved_info['tier_str']
                     result['converted_score'] = solved_info['converted_score']
+                    result['accepted_user_count'] = solved_info['accepted_user_count']
                     if solved_info['title']:
                         result['problem_name'] = f"{solved_info['title']} ({problem_num}번)"
-                    print(f"[Solved.ac] {problem_num}번 → {solved_info['tier_str']} ({solved_info['converted_score']}점)")
+                    print(f"[Solved.ac] {problem_num}번 → {solved_info['tier_str']} ({solved_info['converted_score']}점, 정답자 {solved_info['accepted_user_count']}명)")
 
         name = MEMBERS.get(user_id, user_id)
         print(f"[분석 결과] {name}: {result.get('problem_name')} ({result.get('platform')} · {result.get('original_tier')}) → {result.get('converted_score')}점")
@@ -177,6 +183,45 @@ def analyze_problem(data):
     except Exception as e:
         print(f"[Gemini 분석 실패] user={user_id}, error={e}")
         return None
+
+def compare_with_gemini(a, b):
+    """동점자 두 문제를 Gemini에게 직접 비교해 더 어려운 쪽 반환"""
+    prompt = (
+        f"다음 두 알고리즘 문제 중 어느 것이 더 어렵습니까?\n"
+        f"문제 1: {a['problem_name']} ({a['platform']}, {a['original_tier']})\n"
+        f"문제 2: {b['problem_name']} ({b['platform']}, {b['original_tier']})\n"
+        f"반드시 '1' 또는 '2' 숫자 하나만 출력하세요."
+    )
+    try:
+        res = model.generate_content(prompt)
+        answer = res.text.strip()
+        # '2'만 있거나 '2'가 먼저 나오면 b 승, 그 외 a 승
+        winner = b if answer.startswith('2') or (('2' in answer) and ('1' not in answer)) else a
+        loser = a if winner is b else b
+        print(f"[Gemini 비교] '{winner['problem_name']}' > '{loser['problem_name']}'")
+        return winner
+    except Exception as e:
+        print(f"[Gemini 비교 실패] {e}")
+        return a
+
+def resolve_tie(tied):
+    """동점자 처리:
+    - BOJ 끼리 → Solved.ac accepted_user_count 오름차순 (정답자 적을수록 어려움)
+    - 그 외    → Gemini 직접 비교 (토너먼트)
+    """
+    all_boj = all("백준" in r.get("platform", "") for r in tied)
+    has_count = all(r.get("accepted_user_count") is not None for r in tied)
+
+    if all_boj and has_count:
+        winner = min(tied, key=lambda x: x["accepted_user_count"])
+        print(f"[동점 처리] BOJ 정답자 수 기준 → {winner['problem_name']} ({winner['accepted_user_count']}명) 승")
+        return winner
+
+    print(f"[동점 처리] Gemini 토너먼트 ({len(tied)}명)")
+    winner = tied[0]
+    for challenger in tied[1:]:
+        winner = compare_with_gemini(winner, challenger)
+    return winner
 
 def run_gemini_batch(tasks, batch_size=10):
     """RPM 5 제한을 고려해 batch_size씩 병렬 처리 후 60초 대기"""
@@ -279,7 +324,9 @@ def check_and_notify():
         valid_results = [r for r in analysis_results if r is not None]
 
         if valid_results:
-            best = max(valid_results, key=lambda x: x.get("converted_score", 0))
+            top_score = max(r.get("converted_score", 0) for r in valid_results)
+            tied = [r for r in valid_results if r.get("converted_score", 0) == top_score]
+            best = tied[0] if len(tied) == 1 else resolve_tie(tied)
             winner_id = best["user_id"]
             winner_name = MEMBERS.get(winner_id, "알 수 없음")
             master_block = (
