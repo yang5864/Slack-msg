@@ -151,6 +151,7 @@ def analyze_problem(data):
         """
         res = model.generate_content([prompt, img])
         result = json.loads(res.text.strip().replace('```json', '').replace('```', '').strip())
+        result['converted_score'] = int(str(result.get('converted_score', 0)).replace('점', ''))
         result['user_id'] = user_id
 
         # 백준이면 Solved.ac API로 실제 난이도 보정 (Gemini 환각 방지)
