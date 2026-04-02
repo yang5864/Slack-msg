@@ -164,6 +164,8 @@ def analyze_problem(data):
                         result['problem_name'] = f"{solved_info['title']} ({problem_num}번)"
                     print(f"[Solved.ac] {problem_num}번 → {solved_info['tier_str']} ({solved_info['converted_score']}점)")
 
+        name = MEMBERS.get(user_id, user_id)
+        print(f"[분석 결과] {name}: {result.get('problem_name')} ({result.get('platform')} · {result.get('original_tier')}) → {result.get('converted_score')}점")
         return result
     except Exception as e:
         print(f"[Gemini 분석 실패] user={user_id}, error={e}")
