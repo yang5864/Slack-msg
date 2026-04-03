@@ -54,7 +54,12 @@ def send_midnight_report():
             if reply["ts"] == target_ts: continue
             user_id = reply.get("user")
             if user_id in MEMBERS:
-                submitted_names.append(MEMBERS[user_id])
+                has_image = any(
+                    f.get("mimetype", "").startswith("image/")
+                    for f in reply.get("files", [])
+                )
+                if has_image:
+                    submitted_names.append(MEMBERS[user_id])
 
     # 중복 제거 및 정렬
     submitted_names = sorted(list(set(submitted_names)))
