@@ -57,14 +57,17 @@ headers = {
 # 이미지 다운로드 전용 헤더 (Content-Type 없이 인증만)
 img_headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
 
-# Solved.ac 티어 변환 테이블
+# Solved.ac 티어 변환 테이블 (난이도 통합 환산 기준 기반)
 # level 1-5: 브론즈 5~1 / 6-10: 실버 5~1 / 11-15: 골드 5~1
 # 16-20: 플래티넘 5~1 / 21-25: 다이아 5~1 / 26-30: 루비 5~1
 _TIER_KR = ["브론즈", "실버", "골드", "플래티넘", "다이아", "루비"]
-_SCORE_RANGES = [(1, 20), (21, 40), (41, 70), (71, 90), (91, 97), (98, 100)]
+_SCORE_RANGES = [(1, 22), (23, 55), (56, 85), (86, 100), (97, 100), (100, 100)]
+
+# 프로그래머스 레벨별 환산점수 상하한선 (Gemini 인플레이션 방지용 하드 클램프)
+_PROGRAMMERS_CLAMP = {0: (1, 10), 1: (11, 38), 2: (39, 55), 3: (56, 85), 4: (86, 100)}
 
 def get_solved_ac_info(problem_id: int):
-    """Solved.ac API로 백준 문제 실제 난이도 조회"""
+    """Solved.ac API로 백준 문제 실제 난이도 조회. 티어별 점수 범위만 반환하고 세부 점수는 Gemini에게 위임."""
     try:
         res = requests.get(
             "https://solved.ac/api/v3/problem/show",
@@ -79,19 +82,15 @@ def get_solved_ac_info(problem_id: int):
         title = data.get("titleKo") or data.get("title", "")
 
         if level == 0:
-            return {"tier_str": "Unrated", "converted_score": 5, "title": title}
+            return {"tier_str": "Unrated", "score_range": None, "title": title, "average_tries": data.get("averageTries")}
 
         tier_idx = (level - 1) // 5       # 0=브론즈 ... 5=루비
         sub = 5 - ((level - 1) % 5)       # 5=쉬움, 1=어려움 (티어 내)
         tier_str = f"{_TIER_KR[tier_idx]} {sub}"
 
-        base, top = _SCORE_RANGES[tier_idx]
-        sub_pos = (level - 1) % 5         # 0=티어 내 최하, 4=티어 내 최상
-        converted_score = round(base + (top - base) * sub_pos / 4)
-
         return {
             "tier_str": tier_str,
-            "converted_score": converted_score,
+            "score_range": _SCORE_RANGES[tier_idx],
             "title": title,
             "average_tries": data.get("averageTries"),
         }
@@ -137,15 +136,22 @@ def analyze_problem(data):
         3. 팩트 기반으로 확인된 티어만 'original_tier'에 적어.
 
         [난이도 통합 환산 기준 (1~100점)]
-        두 플랫폼의 난이도를 공정하게 비교하기 위해 아래 기준을 따라 절대 점수를 부여해.
-        - 1~10점:  백준 브론즈 (5~3) / 프로그래머스 Lv.0 (입문 전 단계)
-        - 11~22점: 백준 브론즈 (2~1) / 프로그래머스 Lv.1 (입문자)
-        - 23~38점: 백준 실버 (5~4) / 프로그래머스 Lv.1 상~Lv.2 하 (기본기 초반)
-        - 39~55점: 백준 실버 (3~1) / 프로그래머스 Lv.2 (기본기 완성)
-        - 56~70점: 백준 골드 (5~3) / 프로그래머스 Lv.3 하 (실전 코테 수준)
-        - 71~85점: 백준 골드 (2~1) / 프로그래머스 Lv.3 상 (실전 코테 상위)
-        - 86~100점: 백준 플래티넘 전 구간 / 프로그래머스 Lv.4 (고수, 모임 내 최고 목표치)
-        * 같은 티어/레벨 안에서도 문제의 유명도나 체감 난이도를 고려해서 디테일하게 점수를 가감해.
+        두 플랫폼의 난이도를 공정하게 비교하기 위해 아래 기준에 따라 점수를 부여해.
+
+        백준 (티어 단위 범위):
+        - 브론즈 전 구간: 1~22점
+        - 실버 전 구간: 23~55점
+        - 골드 전 구간: 56~85점
+        - 플래티넘 전 구간: 86~100점
+
+        프로그래머스 (레벨 단위 범위):
+        - Lv.0: 1~10점
+        - Lv.1: 11~38점
+        - Lv.2: 39~55점
+        - Lv.3: 56~85점
+        - Lv.4: 86~100점
+
+        * 같은 티어/레벨 안에서는 체감 난이도를 고려해 디테일하게 점수를 가감해.
         * 다이아몬드, 루비, 프로그래머스 Lv.5는 본 환산 기준에서 제외.
 
         반드시 아래 JSON 형식으로만 대답해. 마크다운(```json) 없이 순수 JSON 텍스트만 출력해.
@@ -166,19 +172,34 @@ def analyze_problem(data):
             result['converted_score'] = 0
         result['user_id'] = user_id
 
-        # 백준이면 Solved.ac API로 실제 난이도 보정 (Gemini 환각 방지)
-        # 프로그래머스는 공개 API 없으므로 Gemini 평가 그대로 사용
+        # 백준이면 Solved.ac API로 티어 확인 후 해당 범위로 클램프 (세부 점수는 Gemini에게 위임)
         if "백준" in result.get("platform", ""):
             problem_num = extract_boj_number(result.get("problem_name", ""))
             if problem_num:
                 solved_info = get_solved_ac_info(problem_num)
                 if solved_info:
                     result['original_tier'] = solved_info['tier_str']
-                    result['converted_score'] = solved_info['converted_score']
                     result['average_tries'] = solved_info['average_tries']
                     if solved_info['title']:
                         result['problem_name'] = f"{solved_info['title']} ({problem_num}번)"
-                    print(f"[Solved.ac] {problem_num}번 → {solved_info['tier_str']} ({solved_info['converted_score']}점, 평균 시도 {solved_info['average_tries']}회)")
+                    if solved_info['score_range']:
+                        lo, hi = solved_info['score_range']
+                        clamped = max(lo, min(hi, result['converted_score']))
+                        if clamped != result['converted_score']:
+                            print(f"[클램프] 백준 {solved_info['tier_str']} 범위({lo}~{hi}점): {result['converted_score']}점 → {clamped}점")
+                        result['converted_score'] = clamped
+                    print(f"[Solved.ac] {problem_num}번 → {solved_info['tier_str']} ({result['converted_score']}점, 평균 시도 {solved_info['average_tries']}회)")
+        # 프로그래머스는 공개 API 없으므로 Gemini 점수를 레벨별 상하한선으로 클램프
+        elif "프로그래머스" in result.get("platform", ""):
+            m = re.search(r'Lv\.(\d)', result.get("original_tier", ""))
+            if m:
+                lv = int(m.group(1))
+                if lv in _PROGRAMMERS_CLAMP:
+                    lo, hi = _PROGRAMMERS_CLAMP[lv]
+                    clamped = max(lo, min(hi, result['converted_score']))
+                    if clamped != result['converted_score']:
+                        print(f"[클램프] 프로그래머스 Lv.{lv} 점수 {result['converted_score']}점 → {clamped}점으로 조정")
+                    result['converted_score'] = clamped
 
         name = MEMBERS.get(user_id, user_id)
         print(f"[분석 결과] {name}: {result.get('problem_name')} ({result.get('platform')} · {result.get('original_tier')}) → {result.get('converted_score')}점")

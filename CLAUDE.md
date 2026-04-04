@@ -60,22 +60,22 @@ Step B에서 각 reply의 `files` 배열을 순회해 `image/*` mimetype인 첫 
 Step D-0 순서:
 1. `run_gemini_batch()` — RPM 15 제한 대응, `batch_size=10`으로 병렬 처리 후 배치 간 61초 대기
 2. `analyze_problem()` — Gemini로 플랫폼·문제명·티어·환산점수·한줄평 추출 (JSON). `converted_score`는 즉시 `int()` 강제 변환 + `ValueError` 방어 처리.
-3. 백준 문제는 `extract_boj_number()`로 문제 번호 추출 후 **Solved.ac API**(`/api/v3/problem/show`)로 실제 티어·환산점수·`averageTries` 보정. 프로그래머스는 공개 API 없어 Gemini 결과 그대로 사용.
+3. 백준 문제는 `extract_boj_number()`로 번호 추출 후 **Solved.ac API**(`/api/v3/problem/show`)로 티어 확인 → `_SCORE_RANGES`의 티어 범위로 Gemini 점수 클램프. 프로그래머스는 `_PROGRAMMERS_CLAMP`로 레벨별 클램프. 두 플랫폼 모두 "티어/레벨 = 범위 보장, 범위 내 세부 점수 = Gemini 위임" 방식으로 통일.
 4. 동점자 처리 — `resolve_tie()`: 전원 백준이면 `averageTries` 내림차순(높을수록 어려움), 그 외 `compare_with_gemini()` 토너먼트.
 5. 공동 1등 탈락자는 슬랙 메시지에 별도 언급.
 
-#### Solved.ac 레벨 → 환산점수 변환
+#### 난이도 통합 환산 기준 (티어 범위)
+Gemini 점수를 아래 범위로 클램프. 범위 내 세부 점수는 Gemini가 체감 난이도로 결정.
 ```
-level 1-5  (브론즈): 1~20점
-level 6-10 (실버):  21~40점
-level 11-15(골드):  41~70점
-level 16-20(플래티넘): 71~90점
-level 21-25(다이아): 91~97점
-level 26-30(루비):  98~100점
-tier_idx = (level-1) // 5
-sub_pos  = (level-1) % 5   # 0=티어 내 최하, 4=티어 내 최상
-score    = round(base + (top-base) * sub_pos / 4)
+백준 (Solved.ac 티어 기준):        프로그래머스 (레벨 기준):
+브론즈 전 구간:  1~22점            Lv.0: 1~10점
+실버   전 구간: 23~55점            Lv.1: 11~38점
+골드   전 구간: 56~85점            Lv.2: 39~55점
+플래티넘 전 구간: 86~100점         Lv.3: 56~85점
+다이아·루비: 97~100점 (제외 대상)  Lv.4: 86~100점
 ```
+`_SCORE_RANGES = [(1,22),(23,55),(56,85),(86,100),(97,100),(100,100)]` (tier_idx 순)
+`_PROGRAMMERS_CLAMP = {0:(1,10), 1:(11,38), 2:(39,55), 3:(56,85), 4:(86,100)}`
 
 #### 정규식 주의사항
 `extract_boj_number()`에서 `\b` 대신 `(?<!\d)(\d{4,5})(?!\d)` 사용. Python 3 유니코드 모드에서 한글이 `\w`로 분류되어 `"2178번"`에서 `\b` 매칭 실패함.
