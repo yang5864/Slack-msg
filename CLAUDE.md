@@ -83,14 +83,17 @@ Gemini 점수를 아래 범위로 클램프. 범위 내 세부 점수는 Gemini�
 ### 벌금 룰
 
 #### 폭탄 돌리기
-- 전원 제출 + 평일: `bomb_amount += 1000` (상한 10,000원)
-- 전원 제출 + 주말: 유지
-- 미제출자 발생: 현재 `bomb_amount`를 미제출자 합산 납부 후 1,000원으로 초기화
+- `state.json`의 `bomb_amount`는 **누적 원금** (0에서 시작/리셋)
+- **실제 벌금** = `effective_bomb = max(1000, bomb_amount)` — 최소 1,000원 보장
+- 전원 제출 + 평일: `bomb_amount += 1000` (상한 10,000원). 단 첫 전원 제출일은 effective_bomb이 1,000원으로 유지됨 (0→1000이지만 max(1000,1000)=1000)
+- 전원 제출 + 주말: 변화 없음
+- 미제출자 발생: `effective_bomb` 전액을 미제출자 합산 납부 → `bomb_amount = 0`으로 리셋
 - 분담 방식(n빵 or 몰아주기)은 미제출자 자율
 
 #### 상습범 가중처벌
 - 폭탄과 별개로 개인 추가 납부
 - n번째 미제출 시 `(n-1) * 1000`원 (1번째=0원, 2번째=1,000원, ...)
+- `calc_fines(missing_uids, miss_counts)` 함수가 계산. 반환값: `{uid: penalty}`, `{name: new_count}`
 
 #### 면제 처리
 - `FULL_EXEMPT_DATES` (dict): 전원 면제 날짜 → 폭탄 동결, 미제출 체크 없음, 안내 메시지만 발송
@@ -103,11 +106,12 @@ FULL_EXEMPT_DATES = {
 ```
 
 ### 상태 영속화 (state.json)
-- 폭탄 금액(`bomb_amount`)과 멤버별 미제출 횟수(`miss_counts`)를 레포의 `state.json`에 저장
+- `bomb_amount` (int, 0~10000): 폭탄 누적 원금. 실제 벌금은 코드에서 `max(1000, bomb_amount)`로 계산
+- `miss_counts` (dict): 멤버 이름 → 누적 미제출 횟수 (예: `"강채연": 2`)
 - `check_slack.py` 실행 시 **GitHub API**(`/repos/{owner}/{repo}/contents/state.json`)로 읽고(GET) 씀(PUT)
-- `GITHUB_TOKEN`은 Actions 자동 발급 토큰 사용 (`secrets.GITHUB_TOKEN`). 별도 등록 불필요.
+- `GITHUB_TOKEN`은 Actions 자동 발급 토큰 (`secrets.GITHUB_TOKEN`). 별도 등록 불필요.
 - `check-slack.yml`에 `permissions: contents: write` 설정 필수
-- `miss_counts` 키는 이름 문자열 (예: `"강채연": 2`)
+- `load_state()` 실패 시 기본값(`bomb_amount=0, miss_counts 전원 0`)으로 폴백
 
 ### GitHub Secrets
 | Secret | 용도 |
