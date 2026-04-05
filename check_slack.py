@@ -22,6 +22,11 @@ GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY")  # "owner/repo"
 STATE_FILE_PATH = "state.json"
 BOMB_MAX = 10_000
 BOMB_STEP = 1_000
+
+# 전원 면제 날짜: 폭탄 동결, 미제출 체크 없음 (이유 메시지 포함)
+FULL_EXEMPT_DATES = {
+    "04월 13일": "스켈레톤 프로젝트 마감일",
+}
 model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
 
 # 2. 스터디원 19명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
@@ -340,6 +345,18 @@ def check_and_notify():
     bomb_amount = state.get("bomb_amount", BOMB_STEP)
     miss_counts = state.get("miss_counts", {uid: 0 for uid in MEMBERS})
     print(f"[state] 폭탄 금액={bomb_amount}원, 미제출 기록 로드 완료")
+
+    # Step 0-1: 전원 면제 날짜 확인 — 해당하면 폭탄 동결 후 즉시 종료
+    if yesterday_str in FULL_EXEMPT_DATES:
+        reason = FULL_EXEMPT_DATES[yesterday_str]
+        exempt_text = (
+            f"📋 *[{yesterday_str} 분량] 전원 제출 면제* — {reason}\n"
+            f"오늘은 벌금 없음! 폭탄은 *{bomb_amount:,}원*으로 동결됩니다. 🧊"
+        )
+        requests.post("https://slack.com/api/chat.postMessage", headers=headers,
+                      data={"channel": CHANNEL_ID, "text": exempt_text})
+        print(f"전원 면제일({yesterday_str}, {reason}). 폭탄 동결, 종료.")
+        return
 
     # Step A: 오늘 아침에 올라온 '오늘의 인증!' 부모 메시지 찾기
     url_history = "https://slack.com/api/conversations.history"
