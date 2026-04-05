@@ -342,16 +342,17 @@ def run_gemini_batch(tasks, batch_size=10):
 def check_and_notify():
     # Step 0: 상태 로드 (폭탄 금액 + 미제출 누적 횟수)
     state, state_sha = load_state()
-    bomb_amount = state.get("bomb_amount", BOMB_STEP)
+    bomb_amount = state.get("bomb_amount", 0)  # 누적 원금 (0에서 시작)
     miss_counts = state.get("miss_counts", {uid: 0 for uid in MEMBERS})
-    print(f"[state] 폭탄 금액={bomb_amount}원, 미제출 기록 로드 완료")
+    effective_bomb = max(BOMB_STEP, bomb_amount)  # 실제 벌금 (최소 1,000원 보장)
+    print(f"[state] 폭탄 누적={bomb_amount}원 / 실효={effective_bomb}원, 미제출 기록 로드 완료")
 
     # Step 0-1: 전원 면제 날짜 확인 — 해당하면 폭탄 동결 후 즉시 종료
     if yesterday_str in FULL_EXEMPT_DATES:
         reason = FULL_EXEMPT_DATES[yesterday_str]
         exempt_text = (
             f"📋 *[{yesterday_str} 분량] 전원 제출 면제* — {reason}\n"
-            f"오늘은 벌금 없음! 폭탄은 *{bomb_amount:,}원*으로 동결됩니다. 🧊"
+            f"오늘은 벌금 없음! 폭탄은 *{effective_bomb:,}원*으로 동결됩니다. 🧊"
         )
         requests.post("https://slack.com/api/chat.postMessage", headers=headers,
                       data={"channel": CHANNEL_ID, "text": exempt_text})
@@ -477,17 +478,19 @@ def check_and_notify():
         is_weekday = yesterday.weekday() < 5
         if is_weekday:
             new_bomb = min(bomb_amount + BOMB_STEP, BOMB_MAX)
-            bomb_change = new_bomb - bomb_amount
+            new_effective = max(BOMB_STEP, new_bomb)
             state["bomb_amount"] = new_bomb
             save_state(state, state_sha)
-            if bomb_change > 0:
-                bomb_notice = f"\n\n💣 *폭탄 돌리기*: {bomb_amount:,}원 → *{new_bomb:,}원* (+{bomb_change:,}원 누적)"
+            if new_effective > effective_bomb:
+                bomb_notice = f"\n\n💣 *폭탄 돌리기*: {effective_bomb:,}원 → *{new_effective:,}원* (+{new_effective - effective_bomb:,}원 누적)"
+            elif new_effective >= BOMB_MAX:
+                bomb_notice = f"\n\n💣 *폭탄 돌리기*: 상한액 *{new_effective:,}원* 도달! 터질 준비 완료 🔥"
             else:
-                bomb_notice = f"\n\n💣 *폭탄 돌리기*: 상한액 *{new_bomb:,}원* 도달! 터질 준비 완료 🔥"
-            print(f"[폭탄] 전원 제출(평일) → 폭탄 {bomb_amount}원 → {new_bomb}원")
+                bomb_notice = f"\n\n💣 *폭탄 돌리기*: 연속 전원 제출 시작! 현재 *{new_effective:,}원*"
+            print(f"[폭탄] 전원 제출(평일) → 폭탄 {bomb_amount}원 → {new_bomb}원 (실효 {new_effective}원)")
         else:
-            bomb_notice = f"\n\n💣 *폭탄 돌리기*: 주말이라 누적 없음 (현재 {bomb_amount:,}원)"
-            print(f"[폭탄] 전원 제출(주말) → 폭탄 유지 ({bomb_amount}원)")
+            bomb_notice = f"\n\n💣 *폭탄 돌리기*: 주말이라 누적 없음 (현재 {effective_bomb:,}원)"
+            print(f"[폭탄] 전원 제출(주말) → 폭탄 유지 ({effective_bomb}원)")
 
         cheer_text = (
             f"🎉 *[{yesterday_str} 분량] 전원 제출 완료!* 🎉\n"
@@ -516,8 +519,8 @@ def check_and_notify():
         else:
             penalty_lines.append(f"  • <@{uid}> ({name}): 0원 [첫 번째 미제출]")
 
-    # 상태 업데이트: 폭탄 초기화, 미제출 횟수 증가
-    state["bomb_amount"] = BOMB_STEP
+    # 상태 업데이트: 폭탄 초기화(0으로 리셋), 미제출 횟수 증가
+    state["bomb_amount"] = 0
     for name, cnt in new_miss_counts.items():
         state["miss_counts"][name] = cnt
     save_state(state, state_sha)
@@ -527,8 +530,8 @@ def check_and_notify():
         f"🚨 *[{yesterday_str} 분량] 인증 마감* 🚨\n"
         f"마감 시간(08:59)이 지났습니다. 벌금 입금 부탁드립니다!\n"
         f"카카오뱅크 `3333-32-8918252`\n\n"
-        f"💣 *폭탄 금액: {bomb_amount:,}원* — 미제출자끼리 합산 납부 (n빵 or 몰아주기 자율)\n"
-        f"(폭탄 초기화 → {BOMB_STEP:,}원)\n\n"
+        f"💣 *폭탄 금액: {effective_bomb:,}원* — 미제출자끼리 합산 납부 (n빵 or 몰아주기 자율)\n"
+        f"(폭탄 초기화 → 1,000원)\n\n"
         f"⚠️ *상습범 가중처벌* (개인별 추가 납부):\n"
         f"{penalty_text}"
         + master_block
