@@ -3,6 +3,9 @@ name: Slack Missing Check
 on:
     workflow_dispatch: # cron-job.org에서 찌를 수 있도록 수동 실행 열어두기
 
+permissions:
+    contents: write  # state.json 커밋을 위해 쓰기 권한 필요
+
 jobs:
     check-and-notify:
         runs-on: ubuntu-latest
@@ -25,4 +28,6 @@ jobs:
                   SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
                   SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
                   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  GITHUB_REPOSITORY: ${{ github.repository }}
               run: python check_slack.py

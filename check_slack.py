@@ -9,11 +9,19 @@ import google.generativeai as genai
 from PIL import Image
 from io import BytesIO
 import json
+import base64
 
 # 1. 깃허브 시크릿(환경 변수)에서 토큰과 채널 ID 가져오기
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+
+# GitHub API — state.json 영속화용
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY")  # "owner/repo"
+STATE_FILE_PATH = "state.json"
+BOMB_MAX = 10_000
+BOMB_STEP = 1_000
 model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
 
 # 2. 스터디원 19명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
@@ -65,6 +73,68 @@ _SCORE_RANGES = [(1, 22), (23, 55), (56, 85), (86, 100), (97, 100), (100, 100)]
 
 # 프로그래머스 레벨별 환산점수 상하한선 (Gemini 인플레이션 방지용 하드 클램프)
 _PROGRAMMERS_CLAMP = {0: (1, 10), 1: (11, 38), 2: (39, 55), 3: (56, 85), 4: (86, 100)}
+
+def load_state():
+    """GitHub API로 state.json 읽기. 실패 시 기본값 반환."""
+    default = {"bomb_amount": BOMB_STEP, "miss_counts": {name: 0 for name in MEMBERS.values()}}
+    if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
+        print("[state] GITHUB_TOKEN/GITHUB_REPOSITORY 없음. 기본값 사용.")
+        return default, None
+    url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/contents/{STATE_FILE_PATH}"
+    gh_headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+    try:
+        res = requests.get(url, headers=gh_headers, timeout=10)
+        if res.status_code == 404:
+            print("[state] state.json 없음. 기본값 사용.")
+            return default, None
+        res.raise_for_status()
+        data = res.json()
+        content = json.loads(base64.b64decode(data["content"]).decode("utf-8"))
+        # 새 멤버 누락 방지: MEMBERS에 있는데 state에 없으면 0으로 초기화
+        for name in MEMBERS.values():
+            content["miss_counts"].setdefault(name, 0)
+        return content, data["sha"]
+    except Exception as e:
+        print(f"[state] 읽기 실패: {e}. 기본값 사용.")
+        return default, None
+
+def save_state(state, sha):
+    """GitHub API로 state.json 덮어쓰기."""
+    if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
+        print("[state] GITHUB_TOKEN/GITHUB_REPOSITORY 없음. 저장 생략.")
+        return
+    url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/contents/{STATE_FILE_PATH}"
+    gh_headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+    body = {
+        "message": f"chore: update state [{datetime.now(kst).strftime('%Y-%m-%d')}]",
+        "content": base64.b64encode(json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8")).decode("utf-8"),
+        "branch": "main",
+    }
+    if sha:
+        body["sha"] = sha
+    try:
+        res = requests.put(url, headers=gh_headers, json=body, timeout=10)
+        res.raise_for_status()
+        print("[state] 저장 완료.")
+    except Exception as e:
+        print(f"[state] 저장 실패: {e}")
+
+def calc_fines(missing_uids, miss_counts):
+    """
+    미제출자별 상습 가중처벌액 계산.
+    - 폭탄 금액은 미제출자 합산 총액으로 별도 고지 (분담 방식은 자율)
+    - 상습 가중: n번째 미제출 시 (n-1)*1000원 개인 추가 납부
+    반환: {uid: repeat_penalty} dict, {name: new_miss_count} dict
+    """
+    penalties = {}
+    new_counts = {}
+    for uid in missing_uids:
+        name = MEMBERS.get(uid, uid)
+        prev = miss_counts.get(name, 0)
+        new_count = prev + 1
+        penalties[uid] = (new_count - 1) * 1000  # 1번째=0, 2번째=1000, n번째=(n-1)*1000
+        new_counts[name] = new_count
+    return penalties, new_counts
 
 def get_solved_ac_info(problem_id: int):
     """Solved.ac API로 백준 문제 실제 난이도 조회. 티어별 점수 범위만 반환하고 세부 점수는 Gemini에게 위임."""
@@ -265,6 +335,12 @@ def run_gemini_batch(tasks, batch_size=10):
     return results
 
 def check_and_notify():
+    # Step 0: 상태 로드 (폭탄 금액 + 미제출 누적 횟수)
+    state, state_sha = load_state()
+    bomb_amount = state.get("bomb_amount", BOMB_STEP)
+    miss_counts = state.get("miss_counts", {uid: 0 for uid in MEMBERS})
+    print(f"[state] 폭탄 금액={bomb_amount}원, 미제출 기록 로드 완료")
+
     # Step A: 오늘 아침에 올라온 '오늘의 인증!' 부모 메시지 찾기
     url_history = "https://slack.com/api/conversations.history"
     params_history = {
@@ -380,27 +456,68 @@ def check_and_notify():
         first_ts, first_id = replies_with_ts[0]
         last_ts, last_id = replies_with_ts[-1]
 
+        # 폭탄 돌리기: 어제가 평일이면 폭탄 +1000 (상한 10,000)
+        is_weekday = yesterday.weekday() < 5
+        if is_weekday:
+            new_bomb = min(bomb_amount + BOMB_STEP, BOMB_MAX)
+            bomb_change = new_bomb - bomb_amount
+            state["bomb_amount"] = new_bomb
+            save_state(state, state_sha)
+            if bomb_change > 0:
+                bomb_notice = f"\n\n💣 *폭탄 돌리기*: {bomb_amount:,}원 → *{new_bomb:,}원* (+{bomb_change:,}원 누적)"
+            else:
+                bomb_notice = f"\n\n💣 *폭탄 돌리기*: 상한액 *{new_bomb:,}원* 도달! 터질 준비 완료 🔥"
+            print(f"[폭탄] 전원 제출(평일) → 폭탄 {bomb_amount}원 → {new_bomb}원")
+        else:
+            bomb_notice = f"\n\n💣 *폭탄 돌리기*: 주말이라 누적 없음 (현재 {bomb_amount:,}원)"
+            print(f"[폭탄] 전원 제출(주말) → 폭탄 유지 ({bomb_amount}원)")
+
         cheer_text = (
             f"🎉 *[{yesterday_str} 분량] 전원 제출 완료!* 🎉\n"
             f"모두 고생 많으셨습니다! 오늘 하루도 화이팅입니다 💪\n\n"
             f"🥇 *오늘의 얼리버드*: <@{first_id}> 님 ({format_submit_time(first_ts)} 제출)\n"
             f"🏃 *오늘의 막차 탑승객*: <@{last_id}> 님 ({format_submit_time(last_ts)} 제출 ㄷㄷ)"
+            + bomb_notice
             + master_block
         )
         requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": cheer_text})
         print("전원 제출 확인 완료. 격려 메시지 전송!")
         return
 
-    # 미제출자가 있을 때 독촉 발송
-    mentions = ", ".join(missing_users)
+    # 미제출자가 있을 때 — 폭탄 돌리기 + 상습범 가중처벌 계산
+    missing_uids = [uid for uid, name in MEMBERS.items() if uid not in submitted_users]
+    penalties, new_miss_counts = calc_fines(missing_uids, miss_counts)
+
+    # 벌금 명세 문자열 생성
+    penalty_lines = []
+    for uid in missing_uids:
+        name = MEMBERS.get(uid, uid)
+        new_count = new_miss_counts[name]
+        penalty = penalties[uid]
+        if penalty > 0:
+            penalty_lines.append(f"  • <@{uid}> ({name}): +{penalty:,}원 추가 [{new_count}번째 미제출]")
+        else:
+            penalty_lines.append(f"  • <@{uid}> ({name}): 0원 [첫 번째 미제출]")
+
+    # 상태 업데이트: 폭탄 초기화, 미제출 횟수 증가
+    state["bomb_amount"] = BOMB_STEP
+    for name, cnt in new_miss_counts.items():
+        state["miss_counts"][name] = cnt
+    save_state(state, state_sha)
+
+    penalty_text = "\n".join(penalty_lines)
     result_text = (
         f"🚨 *[{yesterday_str} 분량] 인증 마감* 🚨\n"
-        f"{mentions} 님, 마감 시간(08:59)이 지났습니다. 벌금 입금 부탁드립니다!\n"
-        f"카카오뱅크 `3333-32-8918252`"
+        f"마감 시간(08:59)이 지났습니다. 벌금 입금 부탁드립니다!\n"
+        f"카카오뱅크 `3333-32-8918252`\n\n"
+        f"💣 *폭탄 금액: {bomb_amount:,}원* — 미제출자끼리 합산 납부 (n빵 or 몰아주기 자율)\n"
+        f"(폭탄 초기화 → {BOMB_STEP:,}원)\n\n"
+        f"⚠️ *상습범 가중처벌* (개인별 추가 납부):\n"
+        f"{penalty_text}"
         + master_block
     )
     requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": result_text})
-    print("검사 및 독촉 알림 전송 완료!")
+    print(f"검사 및 독촉 알림 전송 완료! 폭탄 {bomb_amount}원 → 초기화, 미제출 {missing_uids}")
 
 if __name__ == "__main__":
     check_and_notify()
