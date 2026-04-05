@@ -80,6 +80,35 @@ Gemini 점수를 아래 범위로 클램프. 범위 내 세부 점수는 Gemini�
 #### 정규식 주의사항
 `extract_boj_number()`에서 `\b` 대신 `(?<!\d)(\d{4,5})(?!\d)` 사용. Python 3 유니코드 모드에서 한글이 `\w`로 분류되어 `"2178번"`에서 `\b` 매칭 실패함.
 
+### 벌금 룰
+
+#### 폭탄 돌리기
+- 전원 제출 + 평일: `bomb_amount += 1000` (상한 10,000원)
+- 전원 제출 + 주말: 유지
+- 미제출자 발생: 현재 `bomb_amount`를 미제출자 합산 납부 후 1,000원으로 초기화
+- 분담 방식(n빵 or 몰아주기)은 미제출자 자율
+
+#### 상습범 가중처벌
+- 폭탄과 별개로 개인 추가 납부
+- n번째 미제출 시 `(n-1) * 1000`원 (1번째=0원, 2번째=1,000원, ...)
+
+#### 면제 처리
+- `FULL_EXEMPT_DATES` (dict): 전원 면제 날짜 → 폭탄 동결, 미제출 체크 없음, 안내 메시지만 발송
+- 추가 방법: `"MM월 DD일": "사유"` 형식으로 한 줄 추가
+
+```python
+FULL_EXEMPT_DATES = {
+    "04월 13일": "스켈레톤 프로젝트 마감일",
+}
+```
+
+### 상태 영속화 (state.json)
+- 폭탄 금액(`bomb_amount`)과 멤버별 미제출 횟수(`miss_counts`)를 레포의 `state.json`에 저장
+- `check_slack.py` 실행 시 **GitHub API**(`/repos/{owner}/{repo}/contents/state.json`)로 읽고(GET) 씀(PUT)
+- `GITHUB_TOKEN`은 Actions 자동 발급 토큰 사용 (`secrets.GITHUB_TOKEN`). 별도 등록 불필요.
+- `check-slack.yml`에 `permissions: contents: write` 설정 필수
+- `miss_counts` 키는 이름 문자열 (예: `"강채연": 2`)
+
 ### GitHub Secrets
 | Secret | 용도 |
 |---|---|
@@ -90,4 +119,4 @@ Gemini 점수를 아래 범위로 클램프. 범위 내 세부 점수는 Gemini�
 `SLACK_WEBHOOK_URL`은 더 이상 사용하지 않음 (Tetz봇으로 통일).
 
 ### 멤버 명단
-세 스크립트 모두 `MEMBERS` dict를 각자 보유 (19명). 멤버 변경 시 세 파일 모두 수정 필요.
+세 스크립트 모두 `MEMBERS` dict를 각자 보유 (19명). 멤버 변경 시 세 파일 모두 수정 필요. `state.json`의 `miss_counts`는 이름 키라 멤버 이름 변경 시 `state.json`도 함께 수정 필요.
