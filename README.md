@@ -99,7 +99,49 @@ if i + batch_size < len(tasks):
 
 ---
 
-### 4. 🦺 방어적 프로그래밍 (Defensive Programming)
+### 4. 💣 게이미피케이션 — 폭탄 돌리기 & 상습범 가중처벌
+
+스터디 참여율을 높이기 위해 단순 벌금 고지를 넘어 **긴장감을 주는 누적 벌금 시스템**을 설계했습니다.
+
+**① 폭탄 돌리기**
+
+전원 제출이 이어질수록 폭탄 금액이 쌓이고, 미제출자가 발생하는 순간 터집니다.
+
+```
+[전원 제출 + 평일] bomb_amount += 1,000원 (상한 10,000원)
+[미제출 발생]      bomb_amount 전액 → 미제출자 합산 납부 후 1,000원으로 초기화
+```
+
+미제출자끼리 n빵 또는 사다리타기로 몰아주기 등 분담 방식은 자율에 맡기고, 봇은 총액만 고지합니다.
+
+**② 상습범 가중처벌**
+
+폭탄과 별개로, 미제출 횟수가 쌓일수록 개인 추가 납부액이 늘어납니다.
+
+| 미제출 횟수 | 추가 납부액 |
+|---|---|
+| 1번째 | 0원 |
+| 2번째 | 1,000원 |
+| n번째 | (n-1) × 1,000원 |
+
+**③ 상태 영속화 — GitHub API를 스토리지로 활용**
+
+별도 DB 없이 레포의 `state.json`을 **GitHub Contents API**로 읽고 쓰는 방식으로 상태를 유지합니다. Actions 자동 발급 `GITHUB_TOKEN`만으로 동작하므로 추가 인프라가 전혀 없습니다.
+
+```
+check_slack.py 실행
+    ├─ GitHub API GET → state.json (bomb_amount, miss_counts) 로드
+    ├─ 벌금 로직 처리
+    └─ GitHub API PUT → state.json 업데이트 (레포에 커밋됨)
+```
+
+**④ 면제 날짜 처리**
+
+프로젝트 마감·시험일 등 예외 상황에는 `FULL_EXEMPT_DATES`에 날짜를 추가하면 폭탄 동결 + 미제출 체크 없이 안내 메시지만 발송됩니다.
+
+---
+
+### 5. 🦺 방어적 프로그래밍 (Defensive Programming)
 
 LLM이 프롬프트 지시를 무시하고 예상 외 텍스트(예: `"75점"`, `"난이도 측정 불가"`)를 반환할 때 발생하는 `JSONDecodeError` 및 `ValueError`를 방어합니다. 에러 발생 시 프로세스가 죽지 않고 해당 유저를 0점 처리한 뒤 다음 스레드를 정상적으로 이어가는 **Fallback 로직**을 구현했습니다.
 
@@ -114,7 +156,7 @@ except ValueError:
 
 ---
 
-### 5. 🏆 동점 처리 알고리즘
+### 6. 🏆 동점 처리 알고리즘
 
 | 상황 | 타이브레이커 | 선택 근거 |
 |---|---|---|
@@ -166,11 +208,13 @@ GitHub Actions
     │       └─ Slack API: 자정 현황 브리핑 / 조기 종료 선언
     │
     ├─ [08:59] check_slack.py
+    │       ├─ GitHub API: state.json 로드 (bomb_amount, miss_counts)
     │       ├─ Slack API: 스레드 탐색 → 제출자/이미지 수집
     │       ├─ Gemini API: 이미지 배치 분석 (Multimodal Judge)
     │       ├─ Solved.ac API: 백준 문제 난이도 교차 검증 (RAG 패턴)
     │       ├─ resolve_tie(): BOJ averageTries / Gemini 토너먼트 비교 판정
-    │       └─ Slack API: 결과 발송 (벌금 고지 / 마스터 선정 + 공동 1등 위로)
+    │       ├─ Slack API: 결과 발송 (벌금 고지 / 마스터 선정 + 공동 1등 위로)
+    │       └─ GitHub API: state.json 업데이트 (폭탄 금액 / 미제출 횟수)
     │
     └─ [09:10] send_slack.py
             └─ Slack API: 오늘의 인증 스레드 개설
@@ -185,7 +229,7 @@ GitHub Actions
 | 분류 | 사용 기술 |
 |---|---|
 | **AI / LLM** | Google Gemini API (`gemini-3.1-flash-lite-preview`), Prompt Engineering |
-| **API Integration** | Slack Web API, Solved.ac API v3 |
+| **API Integration** | Slack Web API, Solved.ac API v3, GitHub Contents API |
 | **Language & Libs** | Python 3.9+, `google-generativeai`, `concurrent.futures`, `Pillow`, `re`, `json` |
 | **CI/CD & Infra** | GitHub Actions, cron-job.org |
 
@@ -205,6 +249,8 @@ pip install requests pytz google-generativeai pillow
 | `SLACK_BOT_TOKEN` | Tetz봇 OAuth Token (`xoxb-...`) |
 | `SLACK_CHANNEL_ID` | 알림을 전송할 Slack 채널 ID |
 | `GEMINI_API_KEY` | Google AI Studio에서 발급받은 API 키 |
+
+> `GITHUB_TOKEN`은 GitHub Actions가 워크플로우 실행 시 자동 발급합니다. 별도 등록 불필요.
 
 **3. 로컬 환경 테스트**
 ```bash
