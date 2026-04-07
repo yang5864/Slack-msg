@@ -1,5 +1,5 @@
 {
-  "bomb_amount": 0,
+  "bomb_amount": 1000,
   "miss_counts": {
     "강채연": 0,
     "강태규": 0,
