@@ -84,10 +84,10 @@ Gemini 점수를 아래 범위로 클램프. 범위 내 세부 점수는 Gemini�
 
 #### 폭탄 돌리기
 - `state.json`의 `bomb_amount`는 **누적 원금** (0에서 시작/리셋)
-- **실제 벌금** = `effective_bomb = max(1000, bomb_amount)` — 최소 1,000원 보장
+- **기본 실효 벌금** = `effective_bomb = max(1000, bomb_amount)` — 최소 1,000원 보장
 - 전원 제출 + 평일: `bomb_amount += 1000` (상한 10,000원). 단 첫 전원 제출일은 effective_bomb이 1,000원으로 유지됨 (0→1000이지만 max(1000,1000)=1000)
 - 전원 제출 + 주말: 변화 없음
-- 미제출자 발생: `effective_bomb` 전액을 미제출자 합산 납부 → `bomb_amount = 0`으로 리셋
+- 미제출자 발생: `max(effective_bomb, 미제출자 수 * 1000)` 전액을 미제출자 합산 납부 → `bomb_amount = 0`으로 리셋
 - 분담 방식(n빵 or 몰아주기)은 미제출자 자율
 
 #### 상습범 가중처벌
@@ -106,7 +106,7 @@ FULL_EXEMPT_DATES = {
 ```
 
 ### 상태 영속화 (state.json)
-- `bomb_amount` (int, 0~10000): 폭탄 누적 원금. 실제 벌금은 코드에서 `max(1000, bomb_amount)`로 계산
+- `bomb_amount` (int, 0~10000): 폭탄 누적 원금. 실제 터질 때 총 벌금은 코드에서 `max(max(1000, bomb_amount), 미제출자 수 * 1000)`로 계산
 - `miss_counts` (dict): 멤버 이름 → 누적 미제출 횟수 (예: `"강채연": 2`)
 - `check_slack.py` 실행 시 **GitHub API**(`/repos/{owner}/{repo}/contents/state.json`)로 읽고(GET) 씀(PUT)
 - `GITHUB_TOKEN`은 Actions 자동 발급 토큰 (`secrets.GITHUB_TOKEN`). 별도 등록 불필요.

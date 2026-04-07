@@ -141,6 +141,14 @@ def calc_fines(missing_uids, miss_counts):
         new_counts[name] = new_count
     return penalties, new_counts
 
+def calc_effective_bomb(bomb_amount):
+    """현재 폭탄 표시용 실효 금액. 누적 원금이 0이어도 최소 1,000원."""
+    return max(BOMB_STEP, bomb_amount)
+
+def calc_triggered_bomb_total(bomb_amount, missing_count):
+    """미제출 발생 시 실제 총 폭탄액. 미제출자 1인당 최소 1,000원 하한을 적용한다."""
+    return max(calc_effective_bomb(bomb_amount), missing_count * BOMB_STEP)
+
 def get_solved_ac_info(problem_id: int):
     """Solved.ac API로 백준 문제 실제 난이도 조회. 티어별 점수 범위만 반환하고 세부 점수는 Gemini에게 위임."""
     try:
@@ -344,7 +352,7 @@ def check_and_notify():
     state, state_sha = load_state()
     bomb_amount = state.get("bomb_amount", 0)  # 누적 원금 (0에서 시작)
     miss_counts = state.get("miss_counts", {uid: 0 for uid in MEMBERS})
-    effective_bomb = max(BOMB_STEP, bomb_amount)  # 실제 벌금 (최소 1,000원 보장)
+    effective_bomb = calc_effective_bomb(bomb_amount)  # 현재 표시용 실효 벌금
     print(f"[state] 폭탄 누적={bomb_amount}원 / 실효={effective_bomb}원, 미제출 기록 로드 완료")
 
     # Step 0-1: 전원 면제 날짜 확인 — 해당하면 폭탄 동결 후 즉시 종료
@@ -478,7 +486,7 @@ def check_and_notify():
         is_weekday = yesterday.weekday() < 5
         if is_weekday:
             new_bomb = min(bomb_amount + BOMB_STEP, BOMB_MAX)
-            new_effective = max(BOMB_STEP, new_bomb)
+            new_effective = calc_effective_bomb(new_bomb)
             state["bomb_amount"] = new_bomb
             save_state(state, state_sha)
             if new_effective > effective_bomb:
@@ -506,6 +514,8 @@ def check_and_notify():
 
     # 미제출자가 있을 때 — 폭탄 돌리기 + 상습범 가중처벌 계산
     missing_uids = [uid for uid, name in MEMBERS.items() if uid not in submitted_users]
+    triggered_bomb_total = calc_triggered_bomb_total(bomb_amount, len(missing_uids))
+    per_missing_floor = len(missing_uids) * BOMB_STEP
     penalties, new_miss_counts = calc_fines(missing_uids, miss_counts)
 
     # 벌금 명세 문자열 생성
@@ -526,18 +536,26 @@ def check_and_notify():
     save_state(state, state_sha)
 
     penalty_text = "\n".join(penalty_lines)
+    bomb_floor_note = ""
+    if triggered_bomb_total > effective_bomb:
+        bomb_floor_note = (
+            f"\n(하한 적용: 미제출자 {len(missing_uids)}명 × 1,000원 = {per_missing_floor:,}원)"
+        )
     result_text = (
         f"🚨 *[{yesterday_str} 분량] 인증 마감* 🚨\n"
         f"마감 시간(08:59)이 지났습니다. 벌금 입금 부탁드립니다!\n"
         f"카카오뱅크 `3333-32-8918252`\n\n"
-        f"💣 *폭탄 금액: {effective_bomb:,}원* — 미제출자끼리 합산 납부 (n빵 or 몰아주기 자율)\n"
+        f"💣 *최종 폭탄 금액: {triggered_bomb_total:,}원* — 미제출자끼리 합산 납부 (n빵 or 몰아주기 자율)"
+        f"{bomb_floor_note}\n"
         f"(폭탄 초기화 → 1,000원)\n\n"
         f"⚠️ *상습범 가중처벌* (개인별 추가 납부):\n"
         f"{penalty_text}"
         + master_block
     )
     requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": result_text})
-    print(f"검사 및 독촉 알림 전송 완료! 폭탄 {bomb_amount}원 → 초기화, 미제출 {missing_uids}")
+    print(
+        f"검사 및 독촉 알림 전송 완료! 폭탄 {bomb_amount}원 / 최종 청구 {triggered_bomb_total}원 → 초기화, 미제출 {missing_uids}"
+    )
 
 if __name__ == "__main__":
     check_and_notify()
