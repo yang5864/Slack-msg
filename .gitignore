@@ -1,0 +1,5 @@
+AGENTS.md
+delete.py
+.claude/
+__pycache__/
+*.pyc
