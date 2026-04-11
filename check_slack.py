@@ -3,7 +3,7 @@ import re
 import requests
 import time
 import concurrent.futures
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import pytz
 import google.generativeai as genai
 from PIL import Image
@@ -22,11 +22,39 @@ GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY")  # "owner/repo"
 STATE_FILE_PATH = "state.json"
 BOMB_MAX = 10_000
 BOMB_STEP = 1_000
+MONTHLY_EXEMPTION_TOKENS = 1
+SERVICE_END_DATE = date(2026, 8, 26)
 
 # 전원 면제 날짜: 폭탄 동결, 미제출 체크 없음 (이유 메시지 포함)
 FULL_EXEMPT_DATES = {
-    "04월 13일": "스켈레톤 프로젝트 마감일",
+    date(2026, 4, 13): "4월 모듈 평가 전날",
+    date(2026, 4, 14): "4월 모듈 평가 당일",
+    date(2026, 5, 1): "근로자의 날",
+    date(2026, 5, 4): "어린이날 연휴 휴강일",
+    date(2026, 5, 5): "어린이날",
+    date(2026, 5, 15): "알고리즘 평가 당일",
+    date(2026, 5, 20): "알고리즘 평가 당일",
+    date(2026, 5, 25): "부처님오신날 대체휴일",
+    date(2026, 6, 3): "제9회 전국동시지방선거",
+    date(2026, 6, 8): "6월 모듈 평가 전날",
+    date(2026, 6, 9): "6월 모듈 평가 당일",
+    date(2026, 7, 6): "7월 모듈 평가 당일",
+    date(2026, 7, 13): "학사 일정 휴강일",
+    date(2026, 7, 17): "제헌절 휴강일",
+    date(2026, 7, 27): "학사 일정 휴강일",
+    date(2026, 8, 17): "광복절 대체휴일",
 }
+VALID_EXEMPTION_REASON_KEYWORDS = (
+    "질병", "몸살", "감기", "독감", "코로나", "병원", "치과", "진료", "치료",
+    "입원", "수술", "컨디션", "건강", "생리통", "두통", "장염",
+    "자격증", "시험", "토익", "오픽", "컴활", "sqld", "기사", "필기", "실기",
+    "면접", "면접준비", "시험준비", "자격증준비",
+    "예비군", "출장", "야근", "업무", "프로젝트", "발표", "세미나", "학회",
+    "가족", "경조사", "장례", "병문안", "이사",
+)
+REJECT_EXEMPTION_REASON_KEYWORDS = (
+    "귀찮", "놀", "게임", "술", "음주", "회식", "늦잠", "잠들", "하기싫",
+)
 model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
 
 # 2. 스터디원 19명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
@@ -79,29 +107,67 @@ _SCORE_RANGES = [(1, 22), (23, 55), (56, 85), (86, 100), (97, 100), (100, 100)]
 # 프로그래머스 레벨별 환산점수 상하한선 (Gemini 인플레이션 방지용 하드 클램프)
 _PROGRAMMERS_CLAMP = {0: (1, 10), 1: (11, 38), 2: (39, 55), 3: (56, 85), 4: (86, 100)}
 
-def load_state():
+def build_default_state(target_month: str):
+    return {
+        "bomb_amount": BOMB_STEP,
+        "miss_counts": {name: 0 for name in MEMBERS.values()},
+        "exemption_tokens_month": target_month,
+        "exemption_tokens": {name: MONTHLY_EXEMPTION_TOKENS for name in MEMBERS.values()},
+        "service_end_announced_on": None,
+    }
+
+def ensure_state_shape(state, target_month: str):
+    changed = False
+    state.setdefault("bomb_amount", BOMB_STEP)
+    state.setdefault("miss_counts", {})
+    for name in MEMBERS.values():
+        if name not in state["miss_counts"]:
+            state["miss_counts"][name] = 0
+            changed = True
+
+    stored_month = state.get("exemption_tokens_month")
+    if not isinstance(state.get("exemption_tokens"), dict):
+        state["exemption_tokens"] = {}
+        changed = True
+
+    if stored_month != target_month:
+        state["exemption_tokens_month"] = target_month
+        state["exemption_tokens"] = {name: MONTHLY_EXEMPTION_TOKENS for name in MEMBERS.values()}
+        changed = True
+        print(f"[state] 면제권 월 변경 감지: {stored_month} → {target_month}, 인당 {MONTHLY_EXEMPTION_TOKENS}개로 초기화")
+    else:
+        for name in MEMBERS.values():
+            if name not in state["exemption_tokens"]:
+                state["exemption_tokens"][name] = MONTHLY_EXEMPTION_TOKENS
+                changed = True
+
+    if "service_end_announced_on" not in state:
+        state["service_end_announced_on"] = None
+        changed = True
+
+    return state, changed
+
+def load_state(target_month: str):
     """GitHub API로 state.json 읽기. 실패 시 기본값 반환."""
-    default = {"bomb_amount": BOMB_STEP, "miss_counts": {name: 0 for name in MEMBERS.values()}}
+    default = build_default_state(target_month)
     if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
         print("[state] GITHUB_TOKEN/GITHUB_REPOSITORY 없음. 기본값 사용.")
-        return default, None
+        return default, None, False
     url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/contents/{STATE_FILE_PATH}"
     gh_headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     try:
         res = requests.get(url, headers=gh_headers, timeout=10)
         if res.status_code == 404:
             print("[state] state.json 없음. 기본값 사용.")
-            return default, None
+            return default, None, True
         res.raise_for_status()
         data = res.json()
         content = json.loads(base64.b64decode(data["content"]).decode("utf-8"))
-        # 새 멤버 누락 방지: MEMBERS에 있는데 state에 없으면 0으로 초기화
-        for name in MEMBERS.values():
-            content["miss_counts"].setdefault(name, 0)
-        return content, data["sha"]
+        content, changed = ensure_state_shape(content, target_month)
+        return content, data["sha"], changed
     except Exception as e:
         print(f"[state] 읽기 실패: {e}. 기본값 사용.")
-        return default, None
+        return default, None, True
 
 def save_state(state, sha):
     """GitHub API로 state.json 덮어쓰기."""
@@ -200,6 +266,50 @@ def format_submit_time(ts: float) -> str:
     if dt.minute == 0:
         return f"{day_label} {ampm} {hour}시"
     return f"{day_label} {ampm} {hour}시 {dt.minute}분"
+
+def extract_exemption_reason(text: str):
+    """'면제권 사용' 댓글에서 사유를 추출한다. 면제권 언급이 없으면 None."""
+    normalized = " ".join((text or "").split())
+    if "면제권" not in normalized:
+        return None
+
+    reason = normalized
+    reason = re.sub(r"면제권\s*[가-힣a-zA-Z]*[.。,]?\s*", "", reason)
+    reason = re.sub(r"사유\s*[:：-]?\s*", "", reason)
+    reason = reason.strip(" :-")
+    return reason
+
+def judge_exemption_reason(reason: str):
+    """질병/시험/공적 일정 계열이면 승인, 그 외는 보수적으로 반려."""
+    trimmed = (reason or "").strip()
+    if len(trimmed) < 2:
+        return False, "사유가 비어 있거나 너무 짧아요"
+
+    normalized = re.sub(r"\s+", "", trimmed).lower()
+    if any(keyword in normalized for keyword in REJECT_EXEMPTION_REASON_KEYWORDS):
+        return False, "개인 여가성 사유는 자동 승인 대상이 아니에요"
+    if any(keyword in normalized for keyword in VALID_EXEMPTION_REASON_KEYWORDS):
+        return True, "합당한 사유로 판단했어요"
+    return False, "질병·시험·공적 일정 계열 사유로 보기 어려워 자동 승인하지 않았어요"
+
+def build_exemption_summary(approved_exemptions, rejected_exemptions):
+    sections = []
+
+    if approved_exemptions:
+        lines = [
+            f"  • <@{item['user_id']}>: {item['reason']} (잔여 {item['remaining']}개)"
+            for item in approved_exemptions
+        ]
+        sections.append("\n\n🎟️ *면제권 승인*\n" + "\n".join(lines))
+
+    if rejected_exemptions:
+        lines = [
+            f"  • <@{item['user_id']}>: {item['reason']} — {item['note']}"
+            for item in rejected_exemptions
+        ]
+        sections.append("\n\n⚠️ *면제권 미승인*\n" + "\n".join(lines))
+
+    return "".join(sections)
 
 def analyze_problem(data):
     """Gemini를 사용한 멀티모달 이미지 분석"""
@@ -348,23 +458,58 @@ def run_gemini_batch(tasks, batch_size=10):
     return results
 
 def check_and_notify():
-    # Step 0: 상태 로드 (폭탄 금액 + 미제출 누적 횟수)
-    state, state_sha = load_state()
-    bomb_amount = state.get("bomb_amount", 0)  # 누적 원금 (0에서 시작)
-    miss_counts = state.get("miss_counts", {uid: 0 for uid in MEMBERS})
-    effective_bomb = calc_effective_bomb(bomb_amount)  # 현재 표시용 실효 벌금
+    target_date = yesterday.date()
+    target_month = target_date.strftime("%Y-%m")
+
+    # Step 0: 상태 로드 (폭탄 금액 + 미제출 누적 횟수 + 월별 면제권)
+    state, state_sha, state_dirty = load_state(target_month)
+    bomb_amount = state.get("bomb_amount", 0)
+    miss_counts = state.get("miss_counts", {name: 0 for name in MEMBERS.values()})
+    exemption_tokens = state.get("exemption_tokens", {name: MONTHLY_EXEMPTION_TOKENS for name in MEMBERS.values()})
+    effective_bomb = calc_effective_bomb(bomb_amount)
     print(f"[state] 폭탄 누적={bomb_amount}원 / 실효={effective_bomb}원, 미제출 기록 로드 완료")
 
-    # Step 0-1: 전원 면제 날짜 확인 — 해당하면 폭탄 동결 후 즉시 종료
-    if yesterday_str in FULL_EXEMPT_DATES:
-        reason = FULL_EXEMPT_DATES[yesterday_str]
-        exempt_text = (
-            f"📋 *[{yesterday_str} 분량] 전원 제출 면제* — {reason}\n"
-            f"오늘은 벌금 없음! 폭탄은 *{effective_bomb:,}원*으로 동결됩니다. 🧊"
+    # Step 0-1: 서비스 종료일 이후에는 종료 안내만 한 번 발송
+    if target_date >= SERVICE_END_DATE:
+        announced_on = None
+        if state.get("service_end_announced_on"):
+            try:
+                announced_on = date.fromisoformat(state["service_end_announced_on"])
+            except ValueError:
+                print(f"[state] service_end_announced_on 파싱 실패: {state['service_end_announced_on']}")
+
+        if announced_on and announced_on >= SERVICE_END_DATE:
+            if state_dirty:
+                save_state(state, state_sha)
+            print("서비스 종료 안내가 이미 발송되어 추가 검사 없이 종료합니다.")
+            return
+
+        closure_text = (
+            f"🎓 *[{yesterday_str} 분량] 스터디 운영 종료 안내*\n"
+            f"2026년 8월 26일부터는 인증 검사와 벌금 부과를 종료합니다.\n"
+            f"지금까지 꾸준히 달려오신 모든 분들 정말 고생 많으셨습니다. "
+            f"다들 원하는 곳에 꼭 취업하시길 진심으로 응원할게요! 🍀"
         )
         requests.post("https://slack.com/api/chat.postMessage", headers=headers,
+                      data={"channel": CHANNEL_ID, "text": closure_text})
+        state["service_end_announced_on"] = target_date.isoformat()
+        save_state(state, state_sha)
+        print(f"서비스 종료 안내 발송 완료 ({target_date.isoformat()})")
+        return
+
+    # Step 0-2: 전원 면제 날짜 확인 — 해당하면 폭탄 동결 후 즉시 종료
+    full_exempt_reason = FULL_EXEMPT_DATES.get(target_date)
+    if full_exempt_reason:
+        exempt_text = (
+            f"📋 *[{yesterday_str} 분량] 전원 제출 면제* — {full_exempt_reason}\n"
+            f"오늘은 벌금 없음! 폭탄은 *{effective_bomb:,}원*으로 동결됩니다. 🧊\n"
+            f"원하시는 분은 인증을 자유롭게 남기셔도 됩니다."
+        )
+        if state_dirty:
+            save_state(state, state_sha)
+        requests.post("https://slack.com/api/chat.postMessage", headers=headers,
                       data={"channel": CHANNEL_ID, "text": exempt_text})
-        print(f"전원 면제일({yesterday_str}, {reason}). 폭탄 동결, 종료.")
+        print(f"전원 면제일({yesterday_str}, {full_exempt_reason}). 폭탄 동결, 종료.")
         return
 
     # Step A: 오늘 아침에 올라온 '오늘의 인증!' 부모 메시지 찾기
@@ -372,7 +517,7 @@ def check_and_notify():
     params_history = {
         "channel": CHANNEL_ID,
         "limit": 200,
-        "oldest": oldest_ts  # 어제 9시 이후 메시지만 탐색
+        "oldest": oldest_ts,
     }
 
     res_history = requests.get(url_history, headers=headers, params=params_history).json()
@@ -385,12 +530,12 @@ def check_and_notify():
                 break
 
     if not target_ts:
+        if state_dirty:
+            save_state(state, state_sha)
         print("오늘의 인증 글을 찾지 못했습니다.")
         return
 
     # Step B-0: midnight_report가 이미 조기 종료 선언했는지 확인
-    # - "조기 종료" + yesterday_str 두 조건 모두 충족해야 유효 (다른 날짜 오탐 방지)
-    # - 감지되면 생략이 아니라 Step D(전원 격려 메시지)로 이어짐
     already_closed = False
     if res_history.get("ok"):
         for msg in res_history["messages"]:
@@ -403,47 +548,98 @@ def check_and_notify():
     url_replies = "https://slack.com/api/conversations.replies"
     params_replies = {
         "channel": CHANNEL_ID,
-        "ts": target_ts
+        "ts": target_ts,
     }
 
     res_replies = requests.get(url_replies, headers=headers, params=params_replies).json()
 
-    submitted_users = set()
-    replies_with_ts = []   # (ts, user_id) 튜플 리스트
-    user_images = {}       # user_id -> img_url (멤버당 첫 번째 이미지만)
+    submitted_users = set()      # 실제 인증 완료자 (이미지만/이미지+텍스트 모두 인정)
+    submission_ts_by_user = {}   # user_id -> 첫 인증 ts
+    token_requests = {}          # user_id -> {"reason", "ts"}
+    user_images = {}             # user_id -> img_url
 
     if res_replies.get("ok"):
         for reply in res_replies["messages"]:
-            # 부모 메시지 자체는 제외하고, 댓글 단 사람들의 ID만 수집
             if reply["ts"] == target_ts:
                 continue
+
             user_id = reply.get("user")
-            if user_id and user_id in MEMBERS:
+            if not user_id or user_id not in MEMBERS:
+                continue
+
+            reply_ts = float(reply["ts"])
+            files = reply.get("files", [])
+            has_image = any(f.get("mimetype", "").startswith("image/") for f in files)
+
+            if has_image:
                 submitted_users.add(user_id)
-                replies_with_ts.append((float(reply["ts"]), user_id))
-                # 이미지 첨부 수집 (멤버당 첫 번째 이미지만)
+                prev_ts = submission_ts_by_user.get(user_id)
+                if prev_ts is None or reply_ts < prev_ts:
+                    submission_ts_by_user[user_id] = reply_ts
+
                 if user_id not in user_images:
-                    for f in reply.get("files", []):
+                    for f in files:
                         if f.get("mimetype", "").startswith("image/"):
                             url = f.get("url_private_download") or f.get("url_private")
                             if url:
                                 user_images[user_id] = url
                             break
 
+            reason = extract_exemption_reason(reply.get("text", ""))
+            if reason is not None:
+                token_requests[user_id] = {"reason": reason, "ts": reply_ts}
+
+    approved_exemption_users = set()
+    approved_exemptions = []
+    rejected_exemptions = []
+    for user_id, request in sorted(token_requests.items(), key=lambda item: item[1]["ts"]):
+        if user_id in submitted_users:
+            continue
+
+        name = MEMBERS.get(user_id, user_id)
+        remaining = exemption_tokens.get(name, MONTHLY_EXEMPTION_TOKENS)
+        reason = request["reason"] or "사유 미기재"
+
+        if remaining <= 0:
+            rejected_exemptions.append({
+                "user_id": user_id,
+                "reason": reason,
+                "note": "이번 달 면제권을 이미 사용했어요",
+            })
+            continue
+
+        approved, note = judge_exemption_reason(request["reason"])
+        if approved:
+            approved_exemption_users.add(user_id)
+            exemption_tokens[name] = remaining - 1
+            approved_exemptions.append({
+                "user_id": user_id,
+                "reason": reason,
+                "remaining": exemption_tokens[name],
+            })
+            state_dirty = True
+        else:
+            rejected_exemptions.append({
+                "user_id": user_id,
+                "reason": reason,
+                "note": note,
+            })
+
+    exemption_summary = build_exemption_summary(approved_exemptions, rejected_exemptions)
+
     # Step C: 스터디원 전체 명단과 비교하여 미제출자 색출
-    # already_closed == True 이면 자정에 전원 제출이 확인된 것이므로 미제출자 없음으로 처리
     if already_closed:
         missing_users = []
         print("자정 조기 종료 확인됨. 전원 제출로 처리.")
     else:
         missing_users = [
-            f"<@{uid}>" for uid, name in MEMBERS.items()
-            if uid not in submitted_users
+            f"<@{uid}>" for uid in MEMBERS
+            if uid not in submitted_users and uid not in approved_exemption_users
         ]
 
     # Step D-0: Gemini 알고리즘 마스터 선정 (이미지를 첨부한 제출자 대상)
     master_block = ""
-    analysis_tasks = list(user_images.items())  # [(user_id, img_url), ...]
+    analysis_tasks = list(user_images.items())
     if analysis_tasks:
         print(f"Gemini 분석 시작: {len(analysis_tasks)}명")
         analysis_results = run_gemini_batch(analysis_tasks)
@@ -461,7 +657,6 @@ def check_and_notify():
                 f"💯 난이도 점수: *{best['converted_score']}점*\n"
                 f"💬 {best['reason']}"
             )
-            # 공동 1등 언급 (winner 제외 나머지)
             runners_up = [r for r in tied if r["user_id"] != winner_id]
             if runners_up:
                 mentions = ", ".join(
@@ -477,48 +672,56 @@ def check_and_notify():
 
     # Step D: 결과에 따라 슬랙으로 메시지 전송
     if not missing_users:
-        # 🌟 미제출자가 0명(전원 제출)이면 격려 + 최초/최후 제출자 칭호 메시지 발송
-        replies_with_ts.sort(key=lambda x: x[0])
-        first_ts, first_id = replies_with_ts[0]
-        last_ts, last_id = replies_with_ts[-1]
+        submission_highlight = ""
+        ranked_submissions = sorted(submission_ts_by_user.items(), key=lambda item: item[1])
+        if len(ranked_submissions) == 1:
+            only_id, only_ts = ranked_submissions[0]
+            submission_highlight = f"\n\n🥇 *오늘의 인증자*: <@{only_id}> 님 ({format_submit_time(only_ts)} 제출)"
+        elif ranked_submissions:
+            first_id, first_ts = ranked_submissions[0]
+            last_id, last_ts = ranked_submissions[-1]
+            submission_highlight = (
+                f"\n\n🥇 *오늘의 얼리버드*: <@{first_id}> 님 ({format_submit_time(first_ts)} 제출)\n"
+                f"🏃 *오늘의 막차 탑승객*: <@{last_id}> 님 ({format_submit_time(last_ts)} 제출 ㄷㄷ)"
+            )
 
-        # 폭탄 돌리기: 어제가 평일이면 폭탄 +1000 (상한 10,000)
-        is_weekday = yesterday.weekday() < 5
-        if is_weekday:
-            new_bomb = min(bomb_amount + BOMB_STEP, BOMB_MAX)
-            new_effective = calc_effective_bomb(new_bomb)
-            state["bomb_amount"] = new_bomb
-            save_state(state, state_sha)
-            if new_effective > effective_bomb:
-                bomb_notice = f"\n\n💣 *폭탄 돌리기*: {effective_bomb:,}원 → *{new_effective:,}원* (+{new_effective - effective_bomb:,}원 누적)"
-            elif new_effective >= BOMB_MAX:
-                bomb_notice = f"\n\n💣 *폭탄 돌리기*: 상한액 *{new_effective:,}원* 도달! 터질 준비 완료 🔥"
-            else:
-                bomb_notice = f"\n\n💣 *폭탄 돌리기*: 연속 전원 제출 시작! 현재 *{new_effective:,}원*"
-            print(f"[폭탄] 전원 제출(평일) → 폭탄 {bomb_amount}원 → {new_bomb}원 (실효 {new_effective}원)")
+        if approved_exemptions:
+            title = f"✅ *[{yesterday_str} 분량] 마감 완료* ✅"
+            body = "인증 제출과 면제권 사용 확인이 모두 끝났습니다!"
         else:
-            bomb_notice = f"\n\n💣 *폭탄 돌리기*: 주말이라 누적 없음 (현재 {effective_bomb:,}원)"
-            print(f"[폭탄] 전원 제출(주말) → 폭탄 유지 ({effective_bomb}원)")
+            title = f"🎉 *[{yesterday_str} 분량] 전원 제출 완료!* 🎉"
+            body = "모두 고생 많으셨습니다! 오늘 하루도 화이팅입니다 💪"
 
-        cheer_text = (
-            f"🎉 *[{yesterday_str} 분량] 전원 제출 완료!* 🎉\n"
-            f"모두 고생 많으셨습니다! 오늘 하루도 화이팅입니다 💪\n\n"
-            f"🥇 *오늘의 얼리버드*: <@{first_id}> 님 ({format_submit_time(first_ts)} 제출)\n"
-            f"🏃 *오늘의 막차 탑승객*: <@{last_id}> 님 ({format_submit_time(last_ts)} 제출 ㄷㄷ)"
-            + bomb_notice
-            + master_block
-        )
-        requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": cheer_text})
-        print("전원 제출 확인 완료. 격려 메시지 전송!")
+        new_bomb = min(bomb_amount + BOMB_STEP, BOMB_MAX)
+        new_effective = calc_effective_bomb(new_bomb)
+        state["bomb_amount"] = new_bomb
+        state_dirty = True
+        if new_effective > effective_bomb:
+            bomb_notice = f"\n\n💣 *폭탄 돌리기*: {effective_bomb:,}원 → *{new_effective:,}원* (+{new_effective - effective_bomb:,}원 누적)"
+        elif new_effective >= BOMB_MAX:
+            bomb_notice = f"\n\n💣 *폭탄 돌리기*: 상한액 *{new_effective:,}원* 도달! 터질 준비 완료 🔥"
+        else:
+            bomb_notice = f"\n\n💣 *폭탄 돌리기*: 연속 전원 제출 시작! 현재 *{new_effective:,}원*"
+        print(f"[폭탄] 전원 제출 → 폭탄 {bomb_amount}원 → {new_bomb}원 (실효 {new_effective}원)")
+
+        if state_dirty:
+            save_state(state, state_sha)
+
+        cheer_text = title + "\n" + body + submission_highlight + exemption_summary + bomb_notice + master_block
+        requests.post("https://slack.com/api/chat.postMessage", headers=headers,
+                      data={"channel": CHANNEL_ID, "text": cheer_text})
+        print("전원 처리 완료. 결과 메시지 전송!")
         return
 
     # 미제출자가 있을 때 — 폭탄 돌리기 + 상습범 가중처벌 계산
-    missing_uids = [uid for uid, name in MEMBERS.items() if uid not in submitted_users]
+    missing_uids = [
+        uid for uid in MEMBERS
+        if uid not in submitted_users and uid not in approved_exemption_users
+    ]
     triggered_bomb_total = calc_triggered_bomb_total(bomb_amount, len(missing_uids))
     per_missing_floor = len(missing_uids) * BOMB_STEP
     penalties, new_miss_counts = calc_fines(missing_uids, miss_counts)
 
-    # 벌금 명세 문자열 생성
     penalty_lines = []
     for uid in missing_uids:
         name = MEMBERS.get(uid, uid)
@@ -529,33 +732,33 @@ def check_and_notify():
         else:
             penalty_lines.append(f"  • <@{uid}> ({name}): 0원 [첫 번째 미제출]")
 
-    # 상태 업데이트: 폭탄 초기화(0으로 리셋), 미제출 횟수 증가
     state["bomb_amount"] = 0
+    state_dirty = True
     for name, cnt in new_miss_counts.items():
         state["miss_counts"][name] = cnt
-    save_state(state, state_sha)
+    if state_dirty:
+        save_state(state, state_sha)
 
     penalty_text = "\n".join(penalty_lines)
     bomb_floor_note = ""
     if triggered_bomb_total > effective_bomb:
-        bomb_floor_note = (
-            f"\n(하한 적용: 미제출자 {len(missing_uids)}명 × 1,000원 = {per_missing_floor:,}원)"
-        )
+        bomb_floor_note = f"\n(하한 적용: 미제출자 {len(missing_uids)}명 × 1,000원 = {per_missing_floor:,}원)"
+
     result_text = (
         f"🚨 *[{yesterday_str} 분량] 인증 마감* 🚨\n"
         f"마감 시간(08:59)이 지났습니다. 벌금 입금 부탁드립니다!\n"
         f"카카오뱅크 `3333-32-8918252`\n\n"
         f"💣 *최종 폭탄 금액: {triggered_bomb_total:,}원* — 미제출자끼리 합산 납부 (n빵 or 몰아주기 자율)"
         f"{bomb_floor_note}\n"
-        f"(폭탄 초기화 → 1,000원)\n\n"
-        f"⚠️ *상습범 가중처벌* (개인별 추가 납부):\n"
-        f"{penalty_text}"
+        f"(폭탄 초기화 → 1,000원)"
+        + exemption_summary
+        + "\n\n⚠️ *상습범 가중처벌* (개인별 추가 납부):\n"
+        + penalty_text
         + master_block
     )
-    requests.post("https://slack.com/api/chat.postMessage", headers=headers, data={"channel": CHANNEL_ID, "text": result_text})
-    print(
-        f"검사 및 독촉 알림 전송 완료! 폭탄 {bomb_amount}원 / 최종 청구 {triggered_bomb_total}원 → 초기화, 미제출 {missing_uids}"
-    )
+    requests.post("https://slack.com/api/chat.postMessage", headers=headers,
+                  data={"channel": CHANNEL_ID, "text": result_text})
+    print(f"검사 및 독촉 알림 전송 완료! 폭탄 {bomb_amount}원 / 최종 청구 {triggered_bomb_total}원 → 초기화, 미제출 {missing_uids}")
 
 if __name__ == "__main__":
     check_and_notify()

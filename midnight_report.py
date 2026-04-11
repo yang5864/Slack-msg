@@ -58,7 +58,7 @@ def send_midnight_report():
                     f.get("mimetype", "").startswith("image/")
                     for f in reply.get("files", [])
                 )
-                if has_image:
+                if has_image:  # 이미지가 있으면 텍스트 동반 댓글이어도 제출로 인정
                     submitted_names.append(MEMBERS[user_id])
 
     # 중복 제거 및 정렬
