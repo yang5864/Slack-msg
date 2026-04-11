@@ -139,9 +139,24 @@ check_slack.py 실행
     └─ GitHub API PUT → state.json 업데이트 (레포에 커밋됨)
 ```
 
-**④ 면제 날짜 처리**
+**④ 전원 면제 날짜 처리**
 
-프로젝트 마감·시험일 등 예외 상황에는 `FULL_EXEMPT_DATES`에 날짜를 추가하면 폭탄 동결 + 미제출 체크 없이 안내 메시지만 발송됩니다.
+공휴일·시험일 등 예외 상황에는 `config.py`의 `FULL_EXEMPT_DATES`에 날짜를 추가하면 폭탄 동결 + 미제출 체크 없이 안내 메시지만 발송됩니다. `send_slack.py`도 같은 dict를 참조해, 당일 아침 메시지에 면제일 안내를 함께 출력합니다. 두 파일이 `config.py`를 공유하므로 날짜는 한 곳에서만 관리합니다.
+
+**⑤ 개인 면제권 시스템**
+
+전원 면제와 별개로 개인 단위 면제를 처리합니다. 매월 1회 지급되며, 스레드에 `"면제권"` 키워드 + 사유를 댓글로 남기면 봇이 자동으로 승인/반려를 판정합니다.
+
+| 판정 | 조건 |
+|---|---|
+| 승인 | 질병·시험·자격증·예비군·경조사 등 공적 사유 키워드 포함 |
+| 반려 | 귀찮·게임·술·늦잠 등 여가성 사유 키워드 포함, 또는 키워드 미매칭 |
+
+면제권 승인자는 미제출자 목록에서 제외되지만 폭탄 증가는 정상 적용됩니다(개인 구제 ≠ 전체 기준 변경). 잔여 횟수는 `state.json`의 `exemption_tokens`에 이름별로 기록되며, 월이 바뀌면 자동으로 1개씩 재지급됩니다.
+
+**⑥ 서비스 종료 처리**
+
+`config.py`의 `SERVICE_END_DATE`에 지정된 날짜 이후 분량부터는 종료 안내 메시지를 1회만 발송하고 모든 검사를 중단합니다. 발송 여부는 `state.json`의 `service_end_announced_on`에 기록해 중복 발송을 방지합니다.
 
 ---
 
@@ -212,16 +227,18 @@ GitHub Actions
     │       └─ Slack API: 자정 현황 브리핑 / 조기 종료 선언
     │
     ├─ [08:59] check_slack.py
-    │       ├─ GitHub API: state.json 로드 (bomb_amount, miss_counts)
-    │       ├─ Slack API: 스레드 탐색 → 제출자/이미지 수집
+    │       ├─ GitHub API: state.json 로드 (bomb_amount, miss_counts, exemption_tokens)
+    │       ├─ config.py: SERVICE_END_DATE / FULL_EXEMPT_DATES 확인 → 해당 시 조기 종료
+    │       ├─ Slack API: 스레드 탐색 → 제출자/이미지/면제권 요청 수집
+    │       ├─ 면제권 자동 심사 (사유 키워드 기반 승인/반려)
     │       ├─ Gemini API: 이미지 배치 분석 (Multimodal Judge)
     │       ├─ Solved.ac API: 백준 문제 난이도 교차 검증 (RAG 패턴)
     │       ├─ resolve_tie(): BOJ averageTries / Gemini 토너먼트 비교 판정
     │       ├─ Slack API: 결과 발송 (벌금 고지 / 마스터 선정 + 공동 1등 위로)
-    │       └─ GitHub API: state.json 업데이트 (폭탄 금액 / 미제출 횟수)
+    │       └─ GitHub API: state.json 업데이트 (폭탄 금액 / 미제출 횟수 / 면제권 잔여)
     │
     └─ [09:10] send_slack.py
-            └─ Slack API: 오늘의 인증 스레드 개설
+            └─ config.py 참조 → 전원 면제일이면 면제 안내, 아니면 오늘의 인증 스레드 개설
 ```
 
 > `schedule` 크론 대신 외부 트리거(cron-job.org → `workflow_dispatch`) 방식을 채택해 GitHub Actions 서버 지연으로 인한 이중 실행 문제를 원천 차단했습니다.
