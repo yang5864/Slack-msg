@@ -10,6 +10,7 @@ from PIL import Image
 from io import BytesIO
 import json
 import base64
+from config import FULL_EXEMPT_DATES, SERVICE_END_DATE
 
 # 1. 깃허브 시크릿(환경 변수)에서 토큰과 채널 ID 가져오기
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
@@ -23,27 +24,6 @@ STATE_FILE_PATH = "state.json"
 BOMB_MAX = 10_000
 BOMB_STEP = 1_000
 MONTHLY_EXEMPTION_TOKENS = 1
-SERVICE_END_DATE = date(2026, 8, 26)
-
-# 전원 면제 날짜: 폭탄 동결, 미제출 체크 없음 (이유 메시지 포함)
-FULL_EXEMPT_DATES = {
-    date(2026, 4, 13): "4월 모듈 평가 전날",
-    date(2026, 4, 14): "4월 모듈 평가 당일",
-    date(2026, 5, 1): "근로자의 날",
-    date(2026, 5, 4): "어린이날 연휴 휴강일",
-    date(2026, 5, 5): "어린이날",
-    date(2026, 5, 15): "알고리즘 평가 당일",
-    date(2026, 5, 20): "알고리즘 평가 당일",
-    date(2026, 5, 25): "부처님오신날 대체휴일",
-    date(2026, 6, 3): "제9회 전국동시지방선거",
-    date(2026, 6, 8): "6월 모듈 평가 전날",
-    date(2026, 6, 9): "6월 모듈 평가 당일",
-    date(2026, 7, 6): "7월 모듈 평가 당일",
-    date(2026, 7, 13): "학사 일정 휴강일",
-    date(2026, 7, 17): "제헌절 휴강일",
-    date(2026, 7, 27): "학사 일정 휴강일",
-    date(2026, 8, 17): "광복절 대체휴일",
-}
 VALID_EXEMPTION_REASON_KEYWORDS = (
     "질병", "몸살", "감기", "독감", "코로나", "병원", "치과", "진료", "치료",
     "입원", "수술", "컨디션", "건강", "생리통", "두통", "장염",
