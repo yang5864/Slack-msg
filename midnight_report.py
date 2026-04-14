@@ -2,6 +2,7 @@ import os
 import requests
 from datetime import datetime, timedelta
 import pytz
+from config import FULL_EXEMPT_DATES
 
 # 1. 환경 변수 및 멤버 명단 (기존과 동일)
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
@@ -29,6 +30,11 @@ oldest_ts = str(today_9am.timestamp())
 headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}", "Content-Type": "application/x-www-form-urlencoded"}
 
 def send_midnight_report():
+    # 전원 면제일이면 아무 동작 없이 종료
+    if today.date() in FULL_EXEMPT_DATES:
+        print(f"전원 면제일({today_str}). 자정 리포트 생략.")
+        return
+
     # Step A: 오늘 오전 9시에 올라온 인증글 찾기
     res_history = requests.get("https://slack.com/api/conversations.history",
                                headers=headers, params={"channel": CHANNEL_ID, "limit": 200, "oldest": oldest_ts}).json()

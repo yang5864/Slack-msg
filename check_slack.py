@@ -477,20 +477,9 @@ def check_and_notify():
         print(f"서비스 종료 안내 발송 완료 ({target_date.isoformat()})")
         return
 
-    # Step 0-2: 전원 면제 날짜 확인 — 해당하면 폭탄 동결 후 즉시 종료
+    # Step 0-2: 전원 면제 날짜 확인 — 제출자 없으면 조용히 종료, 있으면 랭킹만 발표
     full_exempt_reason = FULL_EXEMPT_DATES.get(target_date)
-    if full_exempt_reason:
-        exempt_text = (
-            f"📋 *[{yesterday_str} 분량] 전원 제출 면제* — {full_exempt_reason}\n"
-            f"오늘은 벌금 없음! 폭탄은 *{effective_bomb:,}원*으로 동결됩니다. 🧊\n"
-            f"원하시는 분은 인증을 자유롭게 남기셔도 됩니다."
-        )
-        if state_dirty:
-            save_state(state, state_sha)
-        requests.post("https://slack.com/api/chat.postMessage", headers=headers,
-                      data={"channel": CHANNEL_ID, "text": exempt_text})
-        print(f"전원 면제일({yesterday_str}, {full_exempt_reason}). 폭탄 동결, 종료.")
-        return
+    is_exempt = bool(full_exempt_reason)
 
     # Step A: 오늘 아침에 올라온 '오늘의 인증!' 부모 메시지 찾기
     url_history = "https://slack.com/api/conversations.history"
@@ -568,6 +557,69 @@ def check_and_notify():
             reason = extract_exemption_reason(reply.get("text", ""))
             if reason is not None:
                 token_requests[user_id] = {"reason": reason, "ts": reply_ts}
+
+    # 면제일 분기: 제출자 없으면 조용히 종료, 있으면 랭킹만 발표하고 return
+    if is_exempt:
+        if not user_images:
+            if state_dirty:
+                save_state(state, state_sha)
+            print(f"전원 면제일({yesterday_str}, {full_exempt_reason}). 제출자 없음. 조용히 종료.")
+            return
+
+        # Gemini 분석
+        analysis_tasks = list(user_images.items())
+        print(f"[면제일] Gemini 분석 시작: {len(analysis_tasks)}명")
+        analysis_results = run_gemini_batch(analysis_tasks)
+        valid_results = [r for r in analysis_results if r is not None]
+
+        master_block = ""
+        if valid_results:
+            top_score = max(r.get("converted_score", 0) for r in valid_results)
+            tied = [r for r in valid_results if r.get("converted_score", 0) == top_score]
+            best = tied[0] if len(tied) == 1 else resolve_tie(tied)
+            winner_id = best["user_id"]
+            winner_name = MEMBERS.get(winner_id, "알 수 없음")
+            master_block = (
+                f"\n🏆 *오늘의 알고리즘 마스터: {winner_name}* (<@{winner_id}>)\n"
+                f"📚 `{best['problem_name']}` ({best['platform']} · {best['original_tier']})\n"
+                f"💯 난이도 점수: *{best['converted_score']}점*\n"
+                f"💬 {best['reason']}"
+            )
+            runners_up = [r for r in tied if r["user_id"] != winner_id]
+            if runners_up:
+                mentions = ", ".join(
+                    f"<@{r['user_id']}> (`{r['problem_name']}`)"
+                    for r in runners_up
+                )
+                master_block += f"\n\n🥈 *아깝게 탈락한 공동 1등*: {mentions}"
+            print(f"[면제일] 알고리즘 마스터 선정: {winner_name} ({best['converted_score']}점)")
+
+        ranked_submissions = sorted(submission_ts_by_user.items(), key=lambda item: item[1])
+        if len(ranked_submissions) == 1:
+            only_id, only_ts = ranked_submissions[0]
+            submission_highlight = f"\n🥇 *오늘의 인증자*: <@{only_id}> 님 ({format_submit_time(only_ts)} 제출)"
+        elif ranked_submissions:
+            first_id, first_ts = ranked_submissions[0]
+            last_id, last_ts = ranked_submissions[-1]
+            submission_highlight = (
+                f"\n🥇 *오늘의 얼리버드*: <@{first_id}> 님 ({format_submit_time(first_ts)} 제출)\n"
+                f"🏃 *오늘의 막차 탑승객*: <@{last_id}> 님 ({format_submit_time(last_ts)} 제출 ㄷㄷ)"
+            )
+        else:
+            submission_highlight = ""
+
+        exempt_text = (
+            f"📋 *[{yesterday_str} 분량] 자율 제출 랭킹* — {full_exempt_reason}\n"
+            f"면제일이지만 자율 참여해 주신 분들이 계셔서 랭킹을 집계했습니다! 👏"
+            + submission_highlight
+            + master_block
+        )
+        requests.post("https://slack.com/api/chat.postMessage", headers=headers,
+                      data={"channel": CHANNEL_ID, "text": exempt_text})
+        if state_dirty:
+            save_state(state, state_sha)
+        print(f"[면제일] 자율 제출 랭킹 발송 완료. 제출자 {len(user_images)}명.")
+        return
 
     approved_exemption_users = set()
     approved_exemptions = []
