@@ -8,7 +8,7 @@ from config import FULL_EXEMPT_DATES
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
 MEMBERS = {
-    "U0AE555JADP": "강채연", "U0AGDKJC6AW": "강태규", "U0ADY543QDB": "권유현",
+    "U0AGDKJC6AW": "강태규", "U0ADY543QDB": "권유현",
     "U0AEWFJQL8G": "김건우", "U0AJGEDB9MJ": "김기선", "U0AEFT40BEV": "김수현",
     "U0AH924BYKS": "송준수", "U0AE6JC1V36": "양승환", "U0ADRBPLLNS": "오진호",
     "U0AH7L3FUTX": "이대주", "U0AGSGX5QCX": "이민호", "U0AE5BQ0VFB": "이아영",

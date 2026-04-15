@@ -1,7 +1,6 @@
 {
   "bomb_amount": 0,
   "miss_counts": {
-    "강채연": 0,
     "강태규": 0,
     "권유현": 0,
     "김건우": 0,
@@ -23,7 +22,6 @@
   },
   "exemption_tokens_month": "2026-04",
   "exemption_tokens": {
-    "강채연": 1,
     "강태규": 1,
     "권유현": 1,
     "김건우": 1,
