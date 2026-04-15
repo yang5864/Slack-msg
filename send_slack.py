@@ -19,7 +19,7 @@ full_exempt_reason = FULL_EXEMPT_DATES.get(today)
 if full_exempt_reason:
     message = (
         f"📋 *[{today_str}] 오늘의 인증!*\n"
-        f"오늘은 *전원 면제일*입니다 — {full_exempt_reason}\n"
+        f"오늘은 **전원 면제일**입니다 — {full_exempt_reason}\n"
         f"제출 의무 없음! 원하시는 분은 자유롭게 인증해 주세요. 😊"
     )
 else:
