@@ -2,8 +2,8 @@ import os
 import re
 import requests
 import time
-import concurrent.futures
 from datetime import date, datetime, timedelta
+from typing import Optional
 import pytz
 import google.generativeai as genai
 from PIL import Image
@@ -35,7 +35,13 @@ VALID_EXEMPTION_REASON_KEYWORDS = (
 REJECT_EXEMPTION_REASON_KEYWORDS = (
     "귀찮", "놀", "게임", "술", "음주", "회식", "늦잠", "잠들", "하기싫",
 )
-model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
+GEMINI_MODEL_NAME = "gemini-3.1-flash-lite-preview"
+GEMINI_MIN_INTERVAL_SECONDS = 5
+GEMINI_MAX_RETRIES = 3
+GEMINI_RETRY_BUFFER_SECONDS = 1
+GEMINI_FALLBACK_RETRY_SECONDS = 20
+model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+_last_gemini_call_at = 0.0
 
 # 2. 스터디원 18명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
 MEMBERS = {
@@ -290,6 +296,47 @@ def build_exemption_summary(approved_exemptions, rejected_exemptions):
 
     return "".join(sections)
 
+def extract_retry_delay_seconds(error) -> Optional[int]:
+    """Gemini 429 에러 문자열에서 권장 대기 시간을 뽑아낸다."""
+    text = str(error)
+
+    match = re.search(r"Please retry in ([0-9.]+)s", text)
+    if match:
+        return max(1, int(float(match.group(1)) + 0.999))
+
+    match = re.search(r"retry_delay\s*{[^}]*seconds:\s*(\d+)", text, re.DOTALL)
+    if match:
+        return max(1, int(match.group(1)))
+
+    return None
+
+def generate_content_with_retry(payload, *, label: str):
+    """무료 티어 RPM에 맞춰 간격을 두고, 429면 retry_delay를 존중해 재시도한다."""
+    global _last_gemini_call_at
+
+    for attempt in range(1, GEMINI_MAX_RETRIES + 1):
+        elapsed = time.time() - _last_gemini_call_at
+        if elapsed < GEMINI_MIN_INTERVAL_SECONDS:
+            wait_seconds = GEMINI_MIN_INTERVAL_SECONDS - elapsed
+            print(f"[Gemini 속도조절] {label}: {wait_seconds:.1f}초 대기")
+            time.sleep(wait_seconds)
+
+        try:
+            response = model.generate_content(payload)
+            _last_gemini_call_at = time.time()
+            return response
+        except Exception as e:
+            _last_gemini_call_at = time.time()
+            error_text = str(e)
+            is_rate_limited = "429" in error_text or "quota" in error_text.lower() or "Resource has been exhausted" in error_text
+            if not is_rate_limited or attempt == GEMINI_MAX_RETRIES:
+                raise
+
+            retry_seconds = extract_retry_delay_seconds(e) or GEMINI_FALLBACK_RETRY_SECONDS
+            retry_seconds += GEMINI_RETRY_BUFFER_SECONDS
+            print(f"[Gemini 재시도] {label}: {attempt}/{GEMINI_MAX_RETRIES} 실패, {retry_seconds}초 후 재시도")
+            time.sleep(retry_seconds)
+
 def analyze_problem(data):
     """Gemini를 사용한 멀티모달 이미지 분석"""
     user_id, img_url = data
@@ -335,7 +382,7 @@ def analyze_problem(data):
         "reason": "이 문제에 이 점수를 부여한 이유 (알고리즘 종류와 체감 난이도를 1문장으로 짧고 유쾌하게 설명)"
         }
         """
-        res = model.generate_content([prompt, img])
+        res = generate_content_with_retry([prompt, img], label=f"{MEMBERS.get(user_id, user_id)} 이미지 분석")
         result = json.loads(res.text.strip().replace('```json', '').replace('```', '').strip())
         try:
             result['converted_score'] = int(str(result.get('converted_score', 0)).replace('점', '').strip())
@@ -389,7 +436,10 @@ def compare_with_gemini(a, b):
         f"반드시 '1' 또는 '2' 숫자 하나만 출력하세요."
     )
     try:
-        res = model.generate_content(prompt)
+        res = generate_content_with_retry(
+            prompt,
+            label=f"동점 비교 {a['problem_name']} vs {b['problem_name']}"
+        )
         answer = res.text.strip()
         # '2'만 있거나 '2'가 먼저 나오면 b 승, 그 외 a 승
         winner = b if answer.startswith('2') or (('2' in answer) and ('1' not in answer)) else a
@@ -420,20 +470,13 @@ def resolve_tie(tied):
     return winner
 
 def run_gemini_batch(tasks, batch_size=10):
-    """RPM 5 제한을 고려해 batch_size씩 병렬 처리 후 60초 대기"""
+    """무료 티어 RPM에 맞춰 순차 처리한다."""
     results = []
-    total_batches = (len(tasks) + batch_size - 1) // batch_size
-    for i in range(0, len(tasks), batch_size):
-        batch = tasks[i:i + batch_size]
-        batch_num = i // batch_size + 1
-        print(f"Gemini 배치 {batch_num}/{total_batches}: {len(batch)}명 분석 중...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
-            batch_results = list(executor.map(analyze_problem, batch))
-        results.extend(batch_results)
-        # 마지막 배치가 아니면 RPM 리셋 대기
-        if i + batch_size < len(tasks):
-            print("RPM 제한 대기 중... (61초)")
-            time.sleep(61)
+    total = len(tasks)
+    for idx, task in enumerate(tasks, start=1):
+        user_id, _ = task
+        print(f"Gemini 분석 {idx}/{total}: {MEMBERS.get(user_id, user_id)}")
+        results.append(analyze_problem(task))
     return results
 
 def check_and_notify():
