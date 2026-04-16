@@ -37,7 +37,7 @@ REJECT_EXEMPTION_REASON_KEYWORDS = (
 )
 GEMINI_MODEL_NAME = "gemini-2.5-flash"
 GEMINI_LITE_MODEL_NAME = "gemini-2.5-flash-lite"  # 타이브레이킹 전용 (RPD 풀 별도)
-GEMINI_BATCH_SIZE = 5               # 배치당 이미지 수 (RPD=20 기준 4배치 = 4 RPD/일)
+GEMINI_BATCH_SIZE = 2               # 배치당 이미지 수 (RPD=20 기준 17명 → 9배치 = 9 RPD/일)
 GEMINI_MIN_INTERVAL_SECONDS = 13    # RPM=5 → 12초/요청, 1초 버퍼
 GEMINI_MAX_RETRIES = 3
 GEMINI_RETRY_BUFFER_SECONDS = 1
