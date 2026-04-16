@@ -35,13 +35,16 @@ VALID_EXEMPTION_REASON_KEYWORDS = (
 REJECT_EXEMPTION_REASON_KEYWORDS = (
     "귀찮", "놀", "게임", "술", "음주", "회식", "늦잠", "잠들", "하기싫",
 )
-GEMINI_MODEL_NAME = "gemini-2.5-flash-lite"
-GEMINI_MIN_INTERVAL_SECONDS = 7  # RPM=10 → 6초/요청, 1초 버퍼 추가
+GEMINI_MODEL_NAME = "gemini-2.5-flash"
+GEMINI_LITE_MODEL_NAME = "gemini-2.5-flash-lite"  # 타이브레이킹 전용 (RPD 풀 별도)
+GEMINI_BATCH_SIZE = 5               # 배치당 이미지 수 (RPD=20 기준 4배치 = 4 RPD/일)
+GEMINI_MIN_INTERVAL_SECONDS = 13    # RPM=5 → 12초/요청, 1초 버퍼
 GEMINI_MAX_RETRIES = 3
 GEMINI_RETRY_BUFFER_SECONDS = 1
 GEMINI_FALLBACK_RETRY_SECONDS = 20  # 429 fallback
 GEMINI_503_RETRY_SECONDS = 10       # 503 재시도 기본 대기 (attempt * 10s)
 model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+model_lite = genai.GenerativeModel(GEMINI_LITE_MODEL_NAME)
 _last_gemini_call_at = 0.0
 
 # 2. 스터디원 18명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
@@ -311,9 +314,12 @@ def extract_retry_delay_seconds(error) -> Optional[int]:
 
     return None
 
-def generate_content_with_retry(payload, *, label: str):
-    """무료 티어 RPM에 맞춰 간격을 두고, 429/503은 재시도한다."""
+def generate_content_with_retry(payload, *, label: str, model_override=None):
+    """무료 티어 RPM에 맞춰 간격을 두고, 429/503은 재시도한다.
+    model_override: 지정 시 해당 모델 사용 (기본: 전역 model)
+    """
     global _last_gemini_call_at
+    _model = model_override if model_override is not None else model
 
     for attempt in range(1, GEMINI_MAX_RETRIES + 1):
         elapsed = time.time() - _last_gemini_call_at
@@ -323,7 +329,7 @@ def generate_content_with_retry(payload, *, label: str):
             time.sleep(wait_seconds)
 
         try:
-            response = model.generate_content(payload)
+            response = _model.generate_content(payload)
             _last_gemini_call_at = time.time()
             return response
         except Exception as e:
@@ -351,98 +357,118 @@ def generate_content_with_retry(payload, *, label: str):
             print(f"[Gemini 재시도] {label}: {attempt}/{GEMINI_MAX_RETRIES} 실패 ({error_label}), {retry_seconds}초 후 재시도")
             time.sleep(retry_seconds)
 
-def analyze_problem(data):
-    """Gemini를 사용한 멀티모달 이미지 분석"""
-    user_id, img_url = data
-    try:
-        response = requests.get(img_url, headers=img_headers)
-        response.raise_for_status()
-        img = Image.open(BytesIO(response.content))
+def _post_process_result(result):
+    """Solved.ac 티어 확인 및 플랫폼별 점수 클램프."""
+    if "백준" in result.get("platform", ""):
+        problem_num = extract_boj_number(result.get("problem_name", ""))
+        if problem_num:
+            solved_info = get_solved_ac_info(problem_num)
+            if solved_info:
+                result["original_tier"] = solved_info["tier_str"]
+                result["average_tries"] = solved_info["average_tries"]
+                if solved_info["title"]:
+                    result["problem_name"] = f"{solved_info['title']} ({problem_num}번)"
+                if solved_info["score_range"]:
+                    lo, hi = solved_info["score_range"]
+                    clamped = max(lo, min(hi, result["converted_score"]))
+                    if clamped != result["converted_score"]:
+                        print(f"[클램프] 백준 {solved_info['tier_str']} 범위({lo}~{hi}점): {result['converted_score']}점 → {clamped}점")
+                    result["converted_score"] = clamped
+                print(f"[Solved.ac] {result.get('problem_name')} → {solved_info['tier_str']} ({result['converted_score']}점, 평균 시도 {solved_info['average_tries']}회)")
+    elif "프로그래머스" in result.get("platform", ""):
+        m = re.search(r"Lv\.(\d)", result.get("original_tier", ""))
+        if m:
+            lv = int(m.group(1))
+            if lv in _PROGRAMMERS_CLAMP:
+                lo, hi = _PROGRAMMERS_CLAMP[lv]
+                clamped = max(lo, min(hi, result["converted_score"]))
+                if clamped != result["converted_score"]:
+                    print(f"[클램프] 프로그래머스 Lv.{lv} 점수 {result['converted_score']}점 → {clamped}점으로 조정")
+                result["converted_score"] = clamped
+    return result
 
-        prompt = """
-        너는 '1일 1알고 스터디'의 냉철한 AI 코딩테스트 난이도 판별사야.
-        첨부된 화면 캡처 이미지를 보고 어느 플랫폼(백준, 프로그래머스, SW Expert Academy 등)의 무슨 문제인지 파악해.
+def _build_batch_prompt(n: int, user_list_str: str) -> str:
+    return (
+        f"너는 '1일 1알고 스터디'의 냉철한 AI 코딩테스트 난이도 판별사야.\n"
+        f"아래 {n}명의 알고리즘 제출 이미지가 번호 순서대로 첨부되어 있어:\n"
+        f"{user_list_str}\n\n"
+        "🚨 [플랫폼 식별 — 반드시 화면을 직접 보고 판단, 문제 이름으로 추측 절대 금지]\n"
+        "각 이미지에서 다음 단서를 직접 확인해:\n"
+        "• 프로그래머스: URL에 'programmers.co.kr', 초록색 UI, 'Lv.N' 형식 난이도 표기\n"
+        "• 백준: URL에 'acmicpc.net', 4~5자리 문제 번호, solved.ac 색깔 원형 배지\n"
+        "화면에서 직접 확인이 불가능하면 platform을 \"기타\"로 적어.\n\n"
+        "🚨 [점수 다양성 — 같은 레벨이라도 반드시 점수가 달라야 함]\n"
+        "같은 Lv.2 / 실버라도 알고리즘 유형·체감 난이도에 따라 다른 점수를 줘.\n"
+        "범위 안에서 다양하게 분포시켜. 모든 항목이 같은 점수면 틀린 거야.\n\n"
+        "[난이도 통합 환산 기준]\n"
+        "백준: 브론즈 1~22점 / 실버 23~55점 / 골드 56~85점 / 플래티넘 86~100점\n"
+        "프로그래머스: Lv.0 1~10점 / Lv.1 11~38점 / Lv.2 39~55점 / Lv.3 56~85점 / Lv.4 86~100점\n"
+        "다이아몬드·루비·Lv.5는 본 환산 기준 제외.\n\n"
+        f"반드시 {n}개 항목을 포함한 JSON 배열로만 답해. 마크다운(```json) 없이 순수 JSON 텍스트만.\n"
+        '[{"index": 1, "platform": "백준 또는 프로그래머스", '
+        '"problem_name": "문제 이름 (번호 포함)", "original_tier": "골드 1, Lv.3 등 원본 기준 난이도", '
+        '"converted_score": 75, "reason": "알고리즘 유형과 체감 난이도를 1문장으로 짧고 유쾌하게"}, ...]'
+    )
 
-        🚨 [절대 규칙: 환각(Hallucination) 금지!] 🚨
-        1. 문제의 티어(난이도)를 너의 배경지식으로 절대 추측하거나 지어내지 마.
-        2. 반드시 화면에 텍스트로 적혀 있는 티어(예: Silver III, 브론즈 1)나 아이콘의 색상을 있는 그대로 정확하게 읽어.
-        3. 팩트 기반으로 확인된 티어만 'original_tier'에 적어.
-
-        [난이도 통합 환산 기준 (1~100점)]
-        두 플랫폼의 난이도를 공정하게 비교하기 위해 아래 기준에 따라 점수를 부여해.
-
-        백준 (티어 단위 범위):
-        - 브론즈 전 구간: 1~22점
-        - 실버 전 구간: 23~55점
-        - 골드 전 구간: 56~85점
-        - 플래티넘 전 구간: 86~100점
-
-        프로그래머스 (레벨 단위 범위):
-        - Lv.0: 1~10점
-        - Lv.1: 11~38점
-        - Lv.2: 39~55점
-        - Lv.3: 56~85점
-        - Lv.4: 86~100점
-
-        * 같은 티어/레벨 안에서는 체감 난이도를 고려해 디테일하게 점수를 가감해.
-        * 다이아몬드, 루비, 프로그래머스 Lv.5는 본 환산 기준에서 제외.
-
-        반드시 아래 JSON 형식으로만 대답해. 마크다운(```json) 없이 순수 JSON 텍스트만 출력해.
-        {
-        "platform": "백준 혹은 프로그래머스",
-        "problem_name": "문제 이름 (번호 포함)",
-        "original_tier": "골드 1, Lv.3 등 원본 플랫폼 기준 난이도",
-        "converted_score": 75,
-        "reason": "이 문제에 이 점수를 부여한 이유 (알고리즘 종류와 체감 난이도를 1문장으로 짧고 유쾌하게 설명)"
-        }
-        """
-        res = generate_content_with_retry([prompt, img], label=f"{MEMBERS.get(user_id, user_id)} 이미지 분석")
-        result = json.loads(res.text.strip().replace('```json', '').replace('```', '').strip())
+def analyze_batch(tasks):
+    """
+    tasks: [(user_id, img_url), ...] GEMINI_BATCH_SIZE개 이하
+    반환: [result_dict or None, ...] tasks와 동일 순서
+    """
+    # 1. 이미지 다운로드 (실패한 건 None으로 표시)
+    downloaded = []
+    for user_id, img_url in tasks:
         try:
-            result['converted_score'] = int(str(result.get('converted_score', 0)).replace('점', '').strip())
-        except ValueError:
-            print(f"[경고] 제미나이가 이상한 점수를 줬습니다: {result.get('converted_score')}")
-            result['converted_score'] = 0
-        result['user_id'] = user_id
+            resp = requests.get(img_url, headers=img_headers, timeout=10)
+            resp.raise_for_status()
+            img = Image.open(BytesIO(resp.content))
+            downloaded.append((user_id, img))
+        except Exception as e:
+            print(f"[이미지 다운로드 실패] {MEMBERS.get(user_id, user_id)}: {e}")
+            downloaded.append((user_id, None))
 
-        # 백준이면 Solved.ac API로 티어 확인 후 해당 범위로 클램프 (세부 점수는 Gemini에게 위임)
-        if "백준" in result.get("platform", ""):
-            problem_num = extract_boj_number(result.get("problem_name", ""))
-            if problem_num:
-                solved_info = get_solved_ac_info(problem_num)
-                if solved_info:
-                    result['original_tier'] = solved_info['tier_str']
-                    result['average_tries'] = solved_info['average_tries']
-                    if solved_info['title']:
-                        result['problem_name'] = f"{solved_info['title']} ({problem_num}번)"
-                    if solved_info['score_range']:
-                        lo, hi = solved_info['score_range']
-                        clamped = max(lo, min(hi, result['converted_score']))
-                        if clamped != result['converted_score']:
-                            print(f"[클램프] 백준 {solved_info['tier_str']} 범위({lo}~{hi}점): {result['converted_score']}점 → {clamped}점")
-                        result['converted_score'] = clamped
-                    print(f"[Solved.ac] {problem_num}번 → {solved_info['tier_str']} ({result['converted_score']}점, 평균 시도 {solved_info['average_tries']}회)")
-        # 프로그래머스는 공개 API 없으므로 Gemini 점수를 레벨별 상하한선으로 클램프
-        elif "프로그래머스" in result.get("platform", ""):
-            m = re.search(r'Lv\.(\d)', result.get("original_tier", ""))
-            if m:
-                lv = int(m.group(1))
-                if lv in _PROGRAMMERS_CLAMP:
-                    lo, hi = _PROGRAMMERS_CLAMP[lv]
-                    clamped = max(lo, min(hi, result['converted_score']))
-                    if clamped != result['converted_score']:
-                        print(f"[클램프] 프로그래머스 Lv.{lv} 점수 {result['converted_score']}점 → {clamped}점으로 조정")
-                    result['converted_score'] = clamped
+    valid = [(uid, img) for uid, img in downloaded if img is not None]
+    if not valid:
+        return [None] * len(tasks)
 
-        name = MEMBERS.get(user_id, user_id)
-        print(f"[분석 결과] {name}: {result.get('problem_name')} ({result.get('platform')} · {result.get('original_tier')}) → {result.get('converted_score')}점")
-        return result
+    # 2. 프롬프트 + 이미지 페이로드 구성
+    n = len(valid)
+    user_list_str = "\n".join(f"{i+1}. {MEMBERS.get(uid, uid)}" for i, (uid, _) in enumerate(valid))
+    prompt = _build_batch_prompt(n, user_list_str)
+    payload = [prompt] + [img for _, img in valid]
+
+    names_label = "+".join(MEMBERS.get(uid, uid) for uid, _ in valid[:2])
+    if n > 2:
+        names_label += f" 외 {n-2}명"
+
+    # 3. Gemini 호출 + 파싱
+    result_map = {}
+    try:
+        response = generate_content_with_retry(payload, label=f"배치 분석 ({names_label})")
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        items = json.loads(raw)
+        for item in items:
+            idx = int(item.get("index", 0)) - 1
+            if 0 <= idx < len(valid):
+                uid = valid[idx][0]
+                result = {k: v for k, v in item.items() if k != "index"}
+                try:
+                    result["converted_score"] = int(str(result.get("converted_score", 0)).replace("점", "").strip())
+                except ValueError:
+                    print(f"[경고] 이상한 점수: {result.get('converted_score')}")
+                    result["converted_score"] = 0
+                result["user_id"] = uid
+                result = _post_process_result(result)
+                name = MEMBERS.get(uid, uid)
+                print(f"[분석 결과] {name}: {result.get('problem_name')} ({result.get('platform')} · {result.get('original_tier')}) → {result.get('converted_score')}점")
+                result_map[uid] = result
     except Exception as e:
-        print(f"[Gemini 분석 실패] user={user_id}, error={e}")
-        return None
+        print(f"[배치 분석 실패] {names_label}: {e}")
+
+    return [result_map.get(uid) for uid, _ in tasks]
 
 def compare_with_gemini(a, b):
-    """동점자 두 문제를 Gemini에게 직접 비교해 더 어려운 쪽 반환"""
+    """동점자 두 문제를 flash-lite로 직접 비교해 더 어려운 쪽 반환"""
     prompt = (
         f"다음 두 알고리즘 문제 중 어느 것이 더 어렵습니까?\n"
         f"문제 1: {a['problem_name']} ({a['platform']}, {a['original_tier']})\n"
@@ -452,7 +478,8 @@ def compare_with_gemini(a, b):
     try:
         res = generate_content_with_retry(
             prompt,
-            label=f"동점 비교 {a['problem_name']} vs {b['problem_name']}"
+            label=f"동점 비교 {a['problem_name']} vs {b['problem_name']}",
+            model_override=model_lite,
         )
         answer = res.text.strip()
         # '2'만 있거나 '2'가 먼저 나오면 b 승, 그 외 a 승
@@ -484,13 +511,14 @@ def resolve_tie(tied):
     return winner
 
 def run_gemini_batch(tasks):
-    """무료 티어 RPM에 맞춰 순차 처리한다."""
+    """GEMINI_BATCH_SIZE 단위 배치로 나눠 순차 처리한다."""
     results = []
-    total = len(tasks)
-    for idx, task in enumerate(tasks, start=1):
-        user_id, _ = task
-        print(f"Gemini 분석 {idx}/{total}: {MEMBERS.get(user_id, user_id)}")
-        results.append(analyze_problem(task))
+    total_batches = (len(tasks) + GEMINI_BATCH_SIZE - 1) // GEMINI_BATCH_SIZE
+    for batch_idx in range(total_batches):
+        batch = tasks[batch_idx * GEMINI_BATCH_SIZE:(batch_idx + 1) * GEMINI_BATCH_SIZE]
+        names = [MEMBERS.get(uid, uid) for uid, _ in batch]
+        print(f"배치 {batch_idx+1}/{total_batches} ({len(batch)}명): {', '.join(names)}")
+        results.extend(analyze_batch(batch))
     return results
 
 def check_and_notify():
