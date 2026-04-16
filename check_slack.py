@@ -35,11 +35,12 @@ VALID_EXEMPTION_REASON_KEYWORDS = (
 REJECT_EXEMPTION_REASON_KEYWORDS = (
     "귀찮", "놀", "게임", "술", "음주", "회식", "늦잠", "잠들", "하기싫",
 )
-GEMINI_MODEL_NAME = "gemini-3.1-flash-lite-preview"
-GEMINI_MIN_INTERVAL_SECONDS = 5
+GEMINI_MODEL_NAME = "gemini-2.5-flash-lite"
+GEMINI_MIN_INTERVAL_SECONDS = 7  # RPM=10 → 6초/요청, 1초 버퍼 추가
 GEMINI_MAX_RETRIES = 3
 GEMINI_RETRY_BUFFER_SECONDS = 1
-GEMINI_FALLBACK_RETRY_SECONDS = 20
+GEMINI_FALLBACK_RETRY_SECONDS = 20  # 429 fallback
+GEMINI_503_RETRY_SECONDS = 10       # 503 재시도 기본 대기 (attempt * 10s)
 model = genai.GenerativeModel(GEMINI_MODEL_NAME)
 _last_gemini_call_at = 0.0
 
@@ -311,7 +312,7 @@ def extract_retry_delay_seconds(error) -> Optional[int]:
     return None
 
 def generate_content_with_retry(payload, *, label: str):
-    """무료 티어 RPM에 맞춰 간격을 두고, 429면 retry_delay를 존중해 재시도한다."""
+    """무료 티어 RPM에 맞춰 간격을 두고, 429/503은 재시도한다."""
     global _last_gemini_call_at
 
     for attempt in range(1, GEMINI_MAX_RETRIES + 1):
@@ -328,13 +329,26 @@ def generate_content_with_retry(payload, *, label: str):
         except Exception as e:
             _last_gemini_call_at = time.time()
             error_text = str(e)
-            is_rate_limited = "429" in error_text or "quota" in error_text.lower() or "Resource has been exhausted" in error_text
-            if not is_rate_limited or attempt == GEMINI_MAX_RETRIES:
+            is_rate_limited = (
+                "429" in error_text
+                or "quota" in error_text.lower()
+                or "Resource has been exhausted" in error_text
+            )
+            is_server_error = (
+                "503" in error_text
+                or "ServiceUnavailable" in error_text
+                or "overloaded" in error_text.lower()
+            )
+            if not (is_rate_limited or is_server_error) or attempt == GEMINI_MAX_RETRIES:
                 raise
 
-            retry_seconds = extract_retry_delay_seconds(e) or GEMINI_FALLBACK_RETRY_SECONDS
-            retry_seconds += GEMINI_RETRY_BUFFER_SECONDS
-            print(f"[Gemini 재시도] {label}: {attempt}/{GEMINI_MAX_RETRIES} 실패, {retry_seconds}초 후 재시도")
+            if is_rate_limited:
+                retry_seconds = (extract_retry_delay_seconds(e) or GEMINI_FALLBACK_RETRY_SECONDS) + GEMINI_RETRY_BUFFER_SECONDS
+                error_label = "429"
+            else:
+                retry_seconds = GEMINI_503_RETRY_SECONDS * attempt  # 10s, 20s
+                error_label = "503"
+            print(f"[Gemini 재시도] {label}: {attempt}/{GEMINI_MAX_RETRIES} 실패 ({error_label}), {retry_seconds}초 후 재시도")
             time.sleep(retry_seconds)
 
 def analyze_problem(data):
@@ -469,7 +483,7 @@ def resolve_tie(tied):
         winner = compare_with_gemini(winner, challenger)
     return winner
 
-def run_gemini_batch(tasks, batch_size=10):
+def run_gemini_batch(tasks):
     """무료 티어 RPM에 맞춰 순차 처리한다."""
     results = []
     total = len(tasks)
@@ -613,9 +627,14 @@ def check_and_notify():
         print(f"[면제일] Gemini 분석 시작: {len(analysis_tasks)}명")
         analysis_results = run_gemini_batch(analysis_tasks)
         valid_results = [r for r in analysis_results if r is not None]
+        failed_count = len(analysis_tasks) - len(valid_results)
+        if failed_count:
+            print(f"[면제일] Gemini 분석 실패 {failed_count}/{len(analysis_tasks)}건")
 
         master_block = ""
-        if valid_results:
+        if not valid_results:
+            master_block = "\n\n⚠️ _이미지 분석 전체 실패로 마스터 선정을 건너뜁니다_"
+        else:
             top_score = max(r.get("converted_score", 0) for r in valid_results)
             tied = [r for r in valid_results if r.get("converted_score", 0) == top_score]
             best = tied[0] if len(tied) == 1 else resolve_tie(tied)
@@ -634,6 +653,8 @@ def check_and_notify():
                     for r in runners_up
                 )
                 master_block += f"\n\n🥈 *아깝게 탈락한 공동 1등*: {mentions}"
+            if failed_count:
+                master_block += f"\n\n⚠️ _{failed_count}명 분석 실패 — 해당 참여자는 마스터 선정에서 제외됐습니다_"
             print(f"[면제일] 알고리즘 마스터 선정: {winner_name} ({best['converted_score']}점)")
 
         ranked_submissions = sorted(submission_ts_by_user.items(), key=lambda item: item[1])
@@ -718,8 +739,14 @@ def check_and_notify():
         print(f"Gemini 분석 시작: {len(analysis_tasks)}명")
         analysis_results = run_gemini_batch(analysis_tasks)
         valid_results = [r for r in analysis_results if r is not None]
+        failed_count = len(analysis_tasks) - len(valid_results)
+        if failed_count:
+            print(f"Gemini 분석 실패 {failed_count}/{len(analysis_tasks)}건")
 
-        if valid_results:
+        if not valid_results:
+            master_block = "\n\n⚠️ _이미지 분석 전체 실패로 마스터 선정을 건너뜁니다_"
+            print("Gemini 분석 결과 없음. 마스터 선정 생략.")
+        else:
             top_score = max(r.get("converted_score", 0) for r in valid_results)
             tied = [r for r in valid_results if r.get("converted_score", 0) == top_score]
             best = tied[0] if len(tied) == 1 else resolve_tie(tied)
@@ -738,9 +765,9 @@ def check_and_notify():
                     for r in runners_up
                 )
                 master_block += f"\n\n🥈 *아깝게 탈락한 공동 1등*: {mentions}"
+            if failed_count:
+                master_block += f"\n\n⚠️ _{failed_count}명 분석 실패 — 해당 참여자는 마스터 선정에서 제외됐습니다_"
             print(f"알고리즘 마스터 선정: {winner_name} ({best['converted_score']}점)")
-        else:
-            print("Gemini 분석 결과 없음. 마스터 선정 생략.")
     else:
         print("이미지 첨부 없음. 마스터 선정 생략.")
 
