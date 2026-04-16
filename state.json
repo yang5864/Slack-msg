@@ -1,5 +1,5 @@
 {
-  "bomb_amount": 0,
+  "bomb_amount": 1000,
   "miss_counts": {
     "강태규": 0,
     "권유현": 1,
@@ -23,7 +23,7 @@
   "exemption_tokens_month": "2026-04",
   "exemption_tokens": {
     "강태규": 1,
-    "권유현": 1,
+    "권유현": 0,
     "김건우": 1,
     "김기선": 1,
     "김수현": 1,
