@@ -650,40 +650,41 @@ def check_and_notify():
             print(f"전원 면제일({yesterday_str}, {full_exempt_reason}). 제출자 없음. 조용히 종료.")
             return
 
-        # Gemini 분석
-        analysis_tasks = list(user_images.items())
-        print(f"[면제일] Gemini 분석 시작: {len(analysis_tasks)}명")
-        analysis_results = run_gemini_batch(analysis_tasks)
-        valid_results = [r for r in analysis_results if r is not None]
-        failed_count = len(analysis_tasks) - len(valid_results)
-        if failed_count:
-            print(f"[면제일] Gemini 분석 실패 {failed_count}/{len(analysis_tasks)}건")
+        # [잠정 중단] 알고리즘 마스터 선정 기능 — 주목받는 것을 꺼리는 스터디원 의견 반영
+        # analysis_tasks = list(user_images.items())
+        # print(f"[면제일] Gemini 분석 시작: {len(analysis_tasks)}명")
+        # analysis_results = run_gemini_batch(analysis_tasks)
+        # valid_results = [r for r in analysis_results if r is not None]
+        # failed_count = len(analysis_tasks) - len(valid_results)
+        # if failed_count:
+        #     print(f"[면제일] Gemini 분석 실패 {failed_count}/{len(analysis_tasks)}건")
 
+        # master_block = ""
+        # if not valid_results:
+        #     master_block = "\n\n⚠️ _이미지 분석 전체 실패로 마스터 선정을 건너뜁니다_"
+        # else:
+        #     top_score = max(r.get("converted_score", 0) for r in valid_results)
+        #     tied = [r for r in valid_results if r.get("converted_score", 0) == top_score]
+        #     best = tied[0] if len(tied) == 1 else resolve_tie(tied)
+        #     winner_id = best["user_id"]
+        #     winner_name = MEMBERS.get(winner_id, "알 수 없음")
+        #     master_block = (
+        #         f"\n🏆 *오늘의 알고리즘 마스터: {winner_name}* (<@{winner_id}>)\n"
+        #         f"📚 `{best['problem_name']}` ({best['platform']} · {best['original_tier']})\n"
+        #         f"💯 난이도 점수: *{best['converted_score']}점*\n"
+        #         f"💬 {best['reason']}"
+        #     )
+        #     runners_up = [r for r in tied if r["user_id"] != winner_id]
+        #     if runners_up:
+        #         mentions = ", ".join(
+        #             f"<@{r['user_id']}> (`{r['problem_name']}`)"
+        #             for r in runners_up
+        #         )
+        #         master_block += f"\n\n🥈 *아깝게 탈락한 공동 1등*: {mentions}"
+        #     if failed_count:
+        #         master_block += f"\n\n⚠️ _{failed_count}명 분석 실패 — 해당 참여자는 마스터 선정에서 제외됐습니다_"
+        #     print(f"[면제일] 알고리즘 마스터 선정: {winner_name} ({best['converted_score']}점)")
         master_block = ""
-        if not valid_results:
-            master_block = "\n\n⚠️ _이미지 분석 전체 실패로 마스터 선정을 건너뜁니다_"
-        else:
-            top_score = max(r.get("converted_score", 0) for r in valid_results)
-            tied = [r for r in valid_results if r.get("converted_score", 0) == top_score]
-            best = tied[0] if len(tied) == 1 else resolve_tie(tied)
-            winner_id = best["user_id"]
-            winner_name = MEMBERS.get(winner_id, "알 수 없음")
-            master_block = (
-                f"\n🏆 *오늘의 알고리즘 마스터: {winner_name}* (<@{winner_id}>)\n"
-                f"📚 `{best['problem_name']}` ({best['platform']} · {best['original_tier']})\n"
-                f"💯 난이도 점수: *{best['converted_score']}점*\n"
-                f"💬 {best['reason']}"
-            )
-            runners_up = [r for r in tied if r["user_id"] != winner_id]
-            if runners_up:
-                mentions = ", ".join(
-                    f"<@{r['user_id']}> (`{r['problem_name']}`)"
-                    for r in runners_up
-                )
-                master_block += f"\n\n🥈 *아깝게 탈락한 공동 1등*: {mentions}"
-            if failed_count:
-                master_block += f"\n\n⚠️ _{failed_count}명 분석 실패 — 해당 참여자는 마스터 선정에서 제외됐습니다_"
-            print(f"[면제일] 알고리즘 마스터 선정: {winner_name} ({best['converted_score']}점)")
 
         ranked_submissions = sorted(submission_ts_by_user.items(), key=lambda item: item[1])
         if len(ranked_submissions) == 1:
@@ -703,7 +704,7 @@ def check_and_notify():
             f"📋 *[{yesterday_str} 분량] 자율 제출 랭킹* — {full_exempt_reason}\n"
             f"면제일이지만 자율 참여해 주신 분들이 계셔서 랭킹을 집계했습니다! 👏"
             + submission_highlight
-            + master_block
+            # + master_block  # [잠정 중단] 알고리즘 마스터 선정 기능
         )
         requests.post("https://slack.com/api/chat.postMessage", headers=headers,
                       data={"channel": CHANNEL_ID, "text": exempt_text})
@@ -760,44 +761,44 @@ def check_and_notify():
             if uid not in submitted_users and uid not in approved_exemption_users
         ]
 
-    # Step D-0: Gemini 알고리즘 마스터 선정 (이미지를 첨부한 제출자 대상)
+    # Step D-0: Gemini 알고리즘 마스터 선정 — [잠정 중단] 주목받는 것을 꺼리는 스터디원 의견 반영
     master_block = ""
-    analysis_tasks = list(user_images.items())
-    if analysis_tasks:
-        print(f"Gemini 분석 시작: {len(analysis_tasks)}명")
-        analysis_results = run_gemini_batch(analysis_tasks)
-        valid_results = [r for r in analysis_results if r is not None]
-        failed_count = len(analysis_tasks) - len(valid_results)
-        if failed_count:
-            print(f"Gemini 분석 실패 {failed_count}/{len(analysis_tasks)}건")
-
-        if not valid_results:
-            master_block = "\n\n⚠️ _이미지 분석 전체 실패로 마스터 선정을 건너뜁니다_"
-            print("Gemini 분석 결과 없음. 마스터 선정 생략.")
-        else:
-            top_score = max(r.get("converted_score", 0) for r in valid_results)
-            tied = [r for r in valid_results if r.get("converted_score", 0) == top_score]
-            best = tied[0] if len(tied) == 1 else resolve_tie(tied)
-            winner_id = best["user_id"]
-            winner_name = MEMBERS.get(winner_id, "알 수 없음")
-            master_block = (
-                f"\n\n🏆 *오늘의 알고리즘 마스터: {winner_name}* (<@{winner_id}>)\n"
-                f"📚 `{best['problem_name']}` ({best['platform']} · {best['original_tier']})\n"
-                f"💯 난이도 점수: *{best['converted_score']}점*\n"
-                f"💬 {best['reason']}"
-            )
-            runners_up = [r for r in tied if r["user_id"] != winner_id]
-            if runners_up:
-                mentions = ", ".join(
-                    f"<@{r['user_id']}> (`{r['problem_name']}`)"
-                    for r in runners_up
-                )
-                master_block += f"\n\n🥈 *아깝게 탈락한 공동 1등*: {mentions}"
-            if failed_count:
-                master_block += f"\n\n⚠️ _{failed_count}명 분석 실패 — 해당 참여자는 마스터 선정에서 제외됐습니다_"
-            print(f"알고리즘 마스터 선정: {winner_name} ({best['converted_score']}점)")
-    else:
-        print("이미지 첨부 없음. 마스터 선정 생략.")
+    # analysis_tasks = list(user_images.items())
+    # if analysis_tasks:
+    #     print(f"Gemini 분석 시작: {len(analysis_tasks)}명")
+    #     analysis_results = run_gemini_batch(analysis_tasks)
+    #     valid_results = [r for r in analysis_results if r is not None]
+    #     failed_count = len(analysis_tasks) - len(valid_results)
+    #     if failed_count:
+    #         print(f"Gemini 분석 실패 {failed_count}/{len(analysis_tasks)}건")
+    #
+    #     if not valid_results:
+    #         master_block = "\n\n⚠️ _이미지 분석 전체 실패로 마스터 선정을 건너뜁니다_"
+    #         print("Gemini 분석 결과 없음. 마스터 선정 생략.")
+    #     else:
+    #         top_score = max(r.get("converted_score", 0) for r in valid_results)
+    #         tied = [r for r in valid_results if r.get("converted_score", 0) == top_score]
+    #         best = tied[0] if len(tied) == 1 else resolve_tie(tied)
+    #         winner_id = best["user_id"]
+    #         winner_name = MEMBERS.get(winner_id, "알 수 없음")
+    #         master_block = (
+    #             f"\n\n🏆 *오늘의 알고리즘 마스터: {winner_name}* (<@{winner_id}>)\n"
+    #             f"📚 `{best['problem_name']}` ({best['platform']} · {best['original_tier']})\n"
+    #             f"💯 난이도 점수: *{best['converted_score']}점*\n"
+    #             f"💬 {best['reason']}"
+    #         )
+    #         runners_up = [r for r in tied if r["user_id"] != winner_id]
+    #         if runners_up:
+    #             mentions = ", ".join(
+    #                 f"<@{r['user_id']}> (`{r['problem_name']}`)"
+    #                 for r in runners_up
+    #             )
+    #             master_block += f"\n\n🥈 *아깝게 탈락한 공동 1등*: {mentions}"
+    #         if failed_count:
+    #             master_block += f"\n\n⚠️ _{failed_count}명 분석 실패 — 해당 참여자는 마스터 선정에서 제외됐습니다_"
+    #         print(f"알고리즘 마스터 선정: {winner_name} ({best['converted_score']}점)")
+    # else:
+    #     print("이미지 첨부 없음. 마스터 선정 생략.")
 
     # Step D: 결과에 따라 슬랙으로 메시지 전송
     if not missing_users:
@@ -836,7 +837,7 @@ def check_and_notify():
         if state_dirty:
             save_state(state, state_sha)
 
-        cheer_text = title + "\n" + body + submission_highlight + exemption_summary + bomb_notice + master_block
+        cheer_text = title + "\n" + body + submission_highlight + exemption_summary + bomb_notice  # + master_block  # [잠정 중단]
         requests.post("https://slack.com/api/chat.postMessage", headers=headers,
                       data={"channel": CHANNEL_ID, "text": cheer_text})
         print("전원 처리 완료. 결과 메시지 전송!")
@@ -883,7 +884,7 @@ def check_and_notify():
         + exemption_summary
         + "\n\n⚠️ *상습범 가중처벌* (개인별 추가 납부):\n"
         + penalty_text
-        + master_block
+        # + master_block  # [잠정 중단] 알고리즘 마스터 선정 기능
     )
     requests.post("https://slack.com/api/chat.postMessage", headers=headers,
                   data={"channel": CHANNEL_ID, "text": result_text})
