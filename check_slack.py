@@ -822,7 +822,7 @@ def check_and_notify():
             title = f"🎉 *[{yesterday_str} 분량] 전원 제출 완료!* 🎉"
             body = "모두 고생 많으셨습니다! 오늘 하루도 화이팅입니다 💪"
 
-        new_bomb = min(bomb_amount + BOMB_STEP, BOMB_MAX)
+        new_bomb = min(effective_bomb + BOMB_STEP, BOMB_MAX)
         new_effective = calc_effective_bomb(new_bomb)
         state["bomb_amount"] = new_bomb
         state_dirty = True
@@ -862,7 +862,7 @@ def check_and_notify():
         else:
             penalty_lines.append(f"  • <@{uid}> ({name}): 0원 [첫 번째 미제출]")
 
-    state["bomb_amount"] = 0
+    state["bomb_amount"] = BOMB_STEP
     state_dirty = True
     for name, cnt in new_miss_counts.items():
         state["miss_counts"][name] = cnt
