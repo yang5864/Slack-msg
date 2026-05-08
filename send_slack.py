@@ -16,17 +16,23 @@ today_str = now.strftime("%m월 %d일")
 
 # 3. 슬랙으로 보낼 메시지
 full_exempt_reason = FULL_EXEMPT_DATES.get(today)
+monthly_reset_notice = ""
+if today.day == 1:
+    monthly_reset_notice = "\n\n🎟️ 이번 달 면제권이 1개로 초기화되었습니다."
+
 if full_exempt_reason:
     message = (
         f"📋 *[{today_str}] 오늘의 인증!*\n"
         f"오늘은 *전원 면제일* 입니다 — {full_exempt_reason}\n"
         f"제출 의무 없음! 원하시는 분은 자유롭게 인증해 주세요. 😊"
+        f"{monthly_reset_notice}"
     )
 else:
     message = (
         f"🔥 *[{today_str}] 오늘의 인증!*\n"
         f"여기에 스레드(댓글)로 오늘 푼 알고리즘을 인증해 주세요!\n\n"
         f"💡 면제권 사용 시 이미지 첨부 없이 댓글에 `면제권 사용(사유: ...)` 형식으로 작성해 주세요."
+        f"{monthly_reset_notice}"
     )
 
 # 4. Tetz봇 토큰을 이용해 메시지 전송
