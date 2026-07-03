@@ -11,10 +11,9 @@ MEMBERS = {
     "U0AGDKJC6AW": "강태규", "U0ADY543QDB": "권유현",
     "U0AEWFJQL8G": "김건우", "U0AJGEDB9MJ": "김기선", "U0AEFT40BEV": "김수현",
     "U0AH924BYKS": "송준수", "U0AE6JC1V36": "양승환", "U0ADRBPLLNS": "오진호",
-    "U0AH7L3FUTX": "이대주", "U0AGSGX5QCX": "이민호", "U0AE5BQ0VFB": "이아영",
+    "U0AH7L3FUTX": "이대주", "U0AE5BQ0VFB": "이아영",
     "U0AE7MCEA2H": "이지민", "U0ADXE54A92": "이채연", "U0AE5DKQF3K": "장지연",
     "U0AE589NP6G": "최규진", "U0AJGDB6W9G": "최보윤", "U0ADSS3M1HQ": "홍상우",
-    "U0AFNU32D8T": "황지원",
 }
 
 kst = pytz.timezone('Asia/Seoul')
