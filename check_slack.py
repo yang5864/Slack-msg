@@ -50,21 +50,10 @@ _last_gemini_call_at = 0.0
 # 2. 스터디원 18명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
 MEMBERS = {
     "U0AGDKJC6AW": "강태규",
-    "U0ADY543QDB": "권유현",
-    "U0AEWFJQL8G": "김건우",
-    "U0AJGEDB9MJ": "김기선",
-    "U0AEFT40BEV": "김수현",
-    "U0AH924BYKS": "송준수",
     "U0AE6JC1V36": "양승환",
     "U0ADRBPLLNS": "오진호",
     "U0AH7L3FUTX": "이대주",
-    "U0AE5BQ0VFB": "이아영",
-    "U0AE7MCEA2H": "이지민",
-    "U0ADXE54A92": "이채연",
-    "U0AE5DKQF3K": "장지연",
     "U0AE589NP6G": "최규진",
-    "U0AJGDB6W9G": "최보윤",
-    "U0ADSS3M1HQ": "홍상우",
 }
 
 # 3. 한국 시간(KST) 기준으로 어제 날짜 포맷팅 (체크봇은 다음날 아침에 실행되므로)
