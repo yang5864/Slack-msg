@@ -17,8 +17,9 @@ today_str = now.strftime("%m월 %d일")
 # 3. 슬랙으로 보낼 메시지
 full_exempt_reason = FULL_EXEMPT_DATES.get(today)
 monthly_reset_notice = ""
-if today.day == 1:
-    monthly_reset_notice = "\n\n🎟️ 이번 달 면제권이 1개로 초기화되었습니다."
+
+# if today.day == 1:
+#     monthly_reset_notice = "\n\n🎟️ 이번 달 면제권이 1개로 초기화되었습니다."
 
 if today == FAREWELL_DATE:
     message = (

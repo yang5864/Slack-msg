@@ -50,10 +50,23 @@ _last_gemini_call_at = 0.0
 # 2. 스터디원 18명 명단 (여기에 아까 메모해둔 ID와 이름을 채워주세요!)
 MEMBERS = {
     "U0AGDKJC6AW": "강태규",
+    # "U0ADY543QDB": "권유현",  # 스터디 중단
+    # "U0AEWFJQL8G": "김건우",  # 스터디 중단
+    # "U0AJGEDB9MJ": "김기선",  # 스터디 중단
+    # "U0AEFT40BEV": "김수현",  # 스터디 중단
+    # "U0AH924BYKS": "송준수",  # 스터디 중단
     "U0AE6JC1V36": "양승환",
     "U0ADRBPLLNS": "오진호",
     "U0AH7L3FUTX": "이대주",
+    # "U0AGSGX5QCX": "이민호",  # 스터디 중단
+    # "U0AE5BQ0VFB": "이아영",  # 스터디 중단
+    # "U0AE7MCEA2H": "이지민",  # 스터디 중단
+    # "U0ADXE54A92": "이채연",  # 스터디 중단
+    # "U0AE5DKQF3K": "장지연",  # 스터디 중단
     "U0AE589NP6G": "최규진",
+    # "U0AJGDB6W9G": "최보윤",  # 스터디 중단
+    # "U0ADSS3M1HQ": "홍상우",  # 스터디 중단
+    # "U0AFNU32D8T": "황지원",  # 스터디 중단
 }
 
 # 3. 한국 시간(KST) 기준으로 어제 날짜 포맷팅 (체크봇은 다음날 아침에 실행되므로)
@@ -878,4 +891,6 @@ def check_and_notify():
     print(f"검사 및 독촉 알림 전송 완료! 폭탄 {bomb_amount}원 / 최종 청구 {triggered_bomb_total}원 → 초기화, 미제출 {missing_uids}")
 
 if __name__ == "__main__":
-    check_and_notify()
+    # [벌금 제도 폐지] 미제출 검사/독촉 로직 비활성화. 코드는 삭제하지 않고 보존.
+    print("벌금 제도가 폐지되어 미제출 검사를 실행하지 않습니다.")
+    # check_and_notify()
