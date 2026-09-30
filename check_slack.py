@@ -11,7 +11,7 @@ from config import (
     STUDY_START_DATE,
     VALID_EXEMPTION_REASON_KEYWORDS,
 )
-from slack_utils import channel_history, has_image, post_message, thread_replies
+from slack_utils import channel_history, has_image, is_test_message, post_message, thread_replies
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -78,7 +78,10 @@ def check_and_notify(now=None):
         return
 
     target_9am = datetime.combine(target, datetime.min.time(), tzinfo=KST).replace(hour=9)
-    messages = channel_history(str(target_9am.timestamp()))
+    messages = [
+        message for message in channel_history(str(target_9am.timestamp()))
+        if not is_test_message(message)
+    ]
 
     if any(
         target_str in message.get("text", "")

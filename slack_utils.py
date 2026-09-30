@@ -4,6 +4,11 @@ from config import SLACK_CHANNEL_ID
 
 
 SLACK_API_BASE = "https://slack.com/api"
+TEST_MESSAGE_MARKER = "[2기 테스트]"
+
+
+def is_test_message(message: dict) -> bool:
+    return TEST_MESSAGE_MARKER in message.get("text", "")
 
 
 def get_channel_id() -> str:

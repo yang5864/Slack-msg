@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import FULL_EXEMPT_DATES, MEMBERS, SERVICE_END_DATE, STUDY_START_DATE
-from slack_utils import channel_history, has_image, post_message, thread_replies
+from slack_utils import channel_history, has_image, is_test_message, post_message, thread_replies
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -24,7 +24,10 @@ def send_midnight_report(now=None):
         return
 
     target_9am = datetime.combine(target, datetime.min.time(), tzinfo=KST).replace(hour=9)
-    messages = channel_history(str(target_9am.timestamp()))
+    messages = [
+        message for message in channel_history(str(target_9am.timestamp()))
+        if not is_test_message(message)
+    ]
 
     if any(
         target_str in message.get("text", "")

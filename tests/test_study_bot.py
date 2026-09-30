@@ -4,7 +4,9 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import check_slack
+import midnight_report
 import send_slack
+import test_notifications
 from config import FIXED_FINE_AMOUNT, MEMBERS, SLACK_CHANNEL_ID, STUDY_START_DATE
 
 
@@ -56,6 +58,43 @@ class StudyBotTests(unittest.TestCase):
         self.assertIn("1인당 1,000원", message)
         self.assertIn("총액: *5,000원*", message)
         self.assertIn("면제권 승인 (횟수 제한 없음)", message)
+
+    @patch("test_notifications.post_message")
+    def test_three_test_messages_are_clearly_marked(self, post_message):
+        test_notifications.send_test_notifications()
+
+        self.assertEqual(post_message.call_count, 3)
+        for call in post_message.call_args_list:
+            message = call.args[0]
+            self.assertIn("[2기 테스트]", message)
+            self.assertNotIn("오늘의 인증!", message)
+            self.assertNotIn("10월 01일", message)
+
+    @patch("midnight_report.post_message")
+    @patch("midnight_report.thread_replies")
+    @patch("midnight_report.channel_history")
+    def test_midnight_ignores_test_parent(self, history, replies, post_message):
+        history.return_value = [
+            {"ts": "100.0", "text": "[2기 테스트] *[10월 01일] 오늘의 인증!*"}
+        ]
+
+        midnight_report.send_midnight_report(datetime(2026, 10, 2, 0, 0, tzinfo=KST))
+
+        replies.assert_not_called()
+        post_message.assert_not_called()
+
+    @patch("check_slack.post_message")
+    @patch("check_slack.thread_replies")
+    @patch("check_slack.channel_history")
+    def test_check_ignores_test_parent(self, history, replies, post_message):
+        history.return_value = [
+            {"ts": "100.0", "text": "[2기 테스트] *[10월 01일] 오늘의 인증!*"}
+        ]
+
+        check_slack.check_and_notify(datetime(2026, 10, 2, 9, 9, tzinfo=KST))
+
+        replies.assert_not_called()
+        post_message.assert_not_called()
 
 
 if __name__ == "__main__":
