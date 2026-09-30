@@ -85,7 +85,7 @@ def check_and_notify(now=None):
     ]
 
     if any(
-        target_str in message.get("text", "")
+        f"[{target_str} 분량]" in message.get("text", "")
         and any(
             marker in message.get("text", "")
             for marker in ("인증 마감", "전원 제출 완료", "마감 완료", "전원 면제일")

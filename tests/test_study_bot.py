@@ -12,7 +12,7 @@ import midnight_report
 import miss_tracker
 import send_slack
 import test_notifications
-from config import FIXED_FINE_AMOUNT, MEMBERS, SLACK_CHANNEL_ID, STUDY_START_DATE
+from config import FIXED_FINE_AMOUNT, FULL_EXEMPT_DATES, MEMBERS, SLACK_CHANNEL_ID, STUDY_START_DATE
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -29,6 +29,33 @@ class StudyBotTests(unittest.TestCase):
         message = send_slack.build_morning_message(date(2026, 10, 1))
         self.assertIn("10월 01일", message)
         self.assertIn("횟수 제한 없이", message)
+
+    def test_weekday_holidays_are_exempt(self):
+        self.assertEqual(FULL_EXEMPT_DATES, {
+            date(2026, 10, 5): "개천절 대체공휴일",
+            date(2026, 10, 9): "한글날",
+            date(2026, 12, 25): "성탄절",
+        })
+        self.assertIn("전원 면제일", send_slack.build_morning_message(date(2026, 10, 5)))
+
+    @patch("check_slack.record_misses")
+    @patch("check_slack.post_message")
+    @patch("check_slack.thread_replies", return_value=[])
+    @patch("check_slack.channel_history")
+    def test_holiday_morning_post_does_not_suppress_final_notice(
+        self, history, _replies, post_message, record_misses
+    ):
+        history.return_value = [{
+            "ts": "100.0",
+            "text": send_slack.build_morning_message(date(2026, 10, 5)),
+        }]
+
+        check_slack.check_and_notify(datetime(2026, 10, 6, 9, 9, tzinfo=KST))
+
+        post_message.assert_called_once_with(
+            "📋 *[10월 05일 분량] 전원 면제일*\n개천절 대체공휴일 — 벌금 없이 마감합니다."
+        )
+        record_misses.assert_not_called()
 
     def test_exemption_reason_parsing_and_judging(self):
         reason = check_slack.extract_exemption_reason("면제권 사용(사유: 병원 진료)")

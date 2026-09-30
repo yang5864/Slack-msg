@@ -21,8 +21,12 @@ MEMBERS = {
 # Slack 참여 후 ID를 MEMBERS에 옮긴다.
 PENDING_MEMBERS = ("김수현", "홍상우")
 
-# 전원 면제일: date(YYYY, M, D): "사유"
-FULL_EXEMPT_DATES = {}
+# 2026년 10~12월 평일 공휴일. 주말은 정기 검사 대상이 아니므로 제외한다.
+FULL_EXEMPT_DATES = {
+    date(2026, 10, 5): "개천절 대체공휴일",
+    date(2026, 10, 9): "한글날",
+    date(2026, 12, 25): "성탄절",
+}
 
 # 사유 심사 규칙은 1기와 동일하게 유지하되, 사용 횟수 제한은 없다.
 VALID_EXEMPTION_REASON_KEYWORDS = (
