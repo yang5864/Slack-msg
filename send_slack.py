@@ -1,69 +1,46 @@
-import os
-import requests
 from datetime import datetime
-import pytz
-from config import FULL_EXEMPT_DATES, FAREWELL_DATE
+from zoneinfo import ZoneInfo
 
-# 1. 깃허브 시크릿(환경 변수) 가져오기
-SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
-CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
+from config import FULL_EXEMPT_DATES, SERVICE_END_DATE, STUDY_START_DATE
+from slack_utils import post_message
 
-# 2. 한국 시간(KST) 기준으로 오늘 날짜 구하기
-kst = pytz.timezone('Asia/Seoul')
-now = datetime.now(kst)
-today = now.date()
-today_str = now.strftime("%m월 %d일")
 
-# 3. 슬랙으로 보낼 메시지
-full_exempt_reason = FULL_EXEMPT_DATES.get(today)
-monthly_reset_notice = ""
+KST = ZoneInfo("Asia/Seoul")
 
-# if today.day == 1:
-#     monthly_reset_notice = "\n\n🎟️ 이번 달 면제권이 1개로 초기화되었습니다."
 
-if today == FAREWELL_DATE:
-    message = (
-        f"🎓 *[{today_str}] 오늘의 인증!*\n"
-        f"여러분 안녕하세요!\n\n"
-        f"추운 겨울에 서로 어색해하던게 엊그제 같은데\n"
-        f"벌써 내일이면 최종 프로젝트 기간이 시작되네요.\n\n"
-        f"그동안 함께 달려온 모든 분들, 정말 수고 많으셨습니다.\n"
-        f"뿔뿔이 흩어지더라도 각자의 자리에서 멋진 개발자로 성장하시길 응원할게요!\n"
-        f"계속 진행하길 희망하신 분들과의 스터디는 계속됩니다! 남은 분들, 앞으로도 함께 달려봐요!\n\n"
-        f"그리고... 오늘은 마지막이니까 *벌금 없는 면제일* 입니다! 원하시는 분들은 자유롭게 인증해 주세요!\n\n"
-        f"최종 플젝에서도 모두 좋은 성과 거두시길 바라겠습니다. 26회차 화이팅!\n\n"
-        f"-Tetz Bot 개발자, 양승환 드림-"
-        f"{monthly_reset_notice}"
-    )
-elif full_exempt_reason:
-    message = (
-        f"📋 *[{today_str}] 오늘의 인증!*\n"
-        f"오늘은 *전원 면제일* 입니다 — {full_exempt_reason}\n"
-        f"제출 의무 없음! 원하시는 분은 자유롭게 인증해 주세요. 😊"
-        f"{monthly_reset_notice}"
-    )
-else:
-    message = (
+def build_morning_message(today):
+    today_str = today.strftime("%m월 %d일")
+    exempt_reason = FULL_EXEMPT_DATES.get(today)
+
+    if exempt_reason:
+        return (
+            f"📋 *[{today_str}] 오늘의 인증!*\n"
+            f"오늘은 *전원 면제일*입니다 — {exempt_reason}\n"
+            "제출 의무는 없으며, 원하시는 분은 자유롭게 인증해 주세요. 😊"
+        )
+
+    return (
         f"🔥 *[{today_str}] 오늘의 인증!*\n"
-        f"여기에 스레드(댓글)로 오늘 푼 알고리즘을 인증해 주세요!\n\n"
-        f"💡 면제권 사용 시 이미지 첨부 없이 댓글에 `면제권 사용(사유: ...)` 형식으로 작성해 주세요."
-        f"{monthly_reset_notice}"
+        "이 스레드에 오늘 푼 알고리즘 문제의 인증 이미지를 올려 주세요!\n\n"
+        "💡 면제권은 횟수 제한 없이 사용할 수 있습니다. "
+        "이미지 대신 `면제권 사용(사유: ...)` 형식으로 댓글을 남겨 주세요."
     )
 
-# 4. Tetz봇 토큰을 이용해 메시지 전송
-url = "https://slack.com/api/chat.postMessage"
-headers = {
-    "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
-    "Content-Type": "application/x-www-form-urlencoded"
-}
-payload = {
-    "channel": CHANNEL_ID,
-    "text": message
-}
 
-response = requests.post(url, headers=headers, data=payload)
+def send_morning_message(now=None):
+    now = now or datetime.now(KST)
+    today = now.date()
 
-if response.status_code == 200 and response.json().get("ok"):
-    print("Tetz봇으로 아침 알림 전송 완료!")
-else:
-    print(f"전송 실패: {response.text}")
+    if today < STUDY_START_DATE:
+        print(f"2기 시작일({STUDY_START_DATE}) 전이므로 아침 알림을 보내지 않습니다.")
+        return
+    if SERVICE_END_DATE and today >= SERVICE_END_DATE:
+        print(f"2기 종료일({SERVICE_END_DATE}) 이후이므로 아침 알림을 보내지 않습니다.")
+        return
+
+    post_message(build_morning_message(today))
+    print("2기 아침 인증글 전송 완료!")
+
+
+if __name__ == "__main__":
+    send_morning_message()

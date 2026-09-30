@@ -17,10 +17,9 @@ jobs:
                   python-version: '3.11'
 
             - name: Install dependencies
-              run: pip install requests pytz
+              run: pip install requests
 
             - name: Send Slack notification
               env:
                   SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-                  SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
               run: python send_slack.py
