@@ -1,10 +1,15 @@
+import base64
+import json
+import sys
 import unittest
 from datetime import date, datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import check_slack
 import midnight_report
+import miss_tracker
 import send_slack
 import test_notifications
 from config import FIXED_FINE_AMOUNT, MEMBERS, SLACK_CHANNEL_ID, STUDY_START_DATE
@@ -31,11 +36,13 @@ class StudyBotTests(unittest.TestCase):
         self.assertTrue(check_slack.judge_exemption_reason(reason)[0])
         self.assertFalse(check_slack.judge_exemption_reason("게임하고 싶음")[0])
 
+    @patch("check_slack.record_misses")
     @patch("check_slack.post_message")
     @patch("check_slack.thread_replies")
     @patch("check_slack.channel_history")
-    def test_each_missing_member_is_charged_fixed_fine(self, history, replies, post_message):
+    def test_each_missing_member_is_charged_fixed_fine(self, history, replies, post_message, record_misses):
         member_ids = list(MEMBERS)
+        record_misses.return_value = {user_id: 2 for user_id in member_ids}
         history.return_value = [{"ts": "100.0", "text": "*[10월 01일] 오늘의 인증!*"}]
         replies.return_value = [
             {"ts": "100.0", "text": "parent"},
@@ -56,8 +63,45 @@ class StudyBotTests(unittest.TestCase):
 
         message = post_message.call_args.args[0]
         self.assertIn("1인당 1,000원", message)
-        self.assertIn("총액: *5,000원*", message)
+        self.assertIn("누적 *2회*", message)
+        self.assertIn("이번 발생액 합계: *5,000원*", message)
+        self.assertIn("지금 송금하지 않아도 됩니다", message)
+        self.assertNotIn("카카오뱅크", message)
         self.assertIn("면제권 승인 (횟수 제한 없음)", message)
+        record_misses.assert_called_once_with(date(2026, 10, 1), member_ids[2:])
+
+    def test_miss_counts_are_derived_from_dated_records(self):
+        records = {
+            "2026-10-01": ["U1", "U2"],
+            "2026-10-02": ["U1"],
+            "2026-10-05": [],
+        }
+        self.assertEqual(miss_tracker.count_misses(records), {"U1": 2, "U2": 1})
+
+    @patch("miss_tracker.load_records")
+    def test_repeat_check_does_not_increase_count(self, load_records):
+        load_records.return_value = ({"2026-10-01": ["U1"]}, "existing-sha")
+        self.assertEqual(miss_tracker.record_misses(date(2026, 10, 1), ["U1"]), {"U1": 1})
+
+    @patch("miss_tracker.load_records")
+    def test_repeat_check_with_changed_result_requires_manual_review(self, load_records):
+        load_records.return_value = ({"2026-10-01": ["U1"]}, "existing-sha")
+        with self.assertRaises(RuntimeError):
+            miss_tracker.record_misses(date(2026, 10, 1), ["U2"])
+
+    @patch("miss_tracker._github_context", return_value=("test-token", "owner/repo"))
+    @patch("miss_tracker.load_records", return_value=({}, "existing-sha"))
+    def test_new_miss_record_is_saved_once(self, _load_records, _github_context):
+        response = SimpleNamespace(raise_for_status=lambda: None)
+        fake_requests = SimpleNamespace(put=unittest.mock.Mock(return_value=response))
+        with patch.dict(sys.modules, {"requests": fake_requests}):
+            counts = miss_tracker.record_misses(date(2026, 10, 1), ["U2", "U1"])
+
+        self.assertEqual(counts, {"U1": 1, "U2": 1})
+        payload = fake_requests.put.call_args.kwargs["json"]
+        saved = json.loads(base64.b64decode(payload["content"]))
+        self.assertEqual(saved, {"missed_dates": {"2026-10-01": ["U1", "U2"]}})
+        self.assertEqual(payload["sha"], "existing-sha")
 
     @patch("test_notifications.post_message")
     def test_three_test_messages_are_clearly_marked(self, post_message):

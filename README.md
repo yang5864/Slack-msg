@@ -21,6 +21,7 @@ Slack 알고리즘 스터디의 인증글, 자정 현황, 다음날 마감 결�
 
 - 인증 이미지가 첨부된 스레드 댓글만 제출로 인정합니다.
 - 미제출 벌금은 누적이나 가중 없이 1인당 항상 1,000원입니다.
+- 벌금 계좌로 즉시 송금하지 않습니다. 미제출 횟수를 기록하고 추후 회식·모임 비용을 나눌 때 정산합니다.
 - 면제권 사용 횟수에는 제한이 없습니다.
 - 면제권은 `면제권 사용(사유: ...)` 형식으로 신청합니다.
 - 면제 사유 판정 기준은 1기와 동일합니다. 질병·시험·공적 일정 계열은 승인하고, 개인 여가성 사유는 반려합니다.
@@ -46,6 +47,8 @@ GitHub Actions Secret에는 새 워크스페이스에서 발급된 토큰 하나
 
 채널 ID는 비밀값이 아니므로 `config.py`의 `SLACK_CHANNEL_ID`에 저장합니다.
 
+미제출 이력은 `miss_counts.v2.json`의 날짜별 Slack ID 목록으로 기록합니다. 누적 횟수는 이 목록에서 계산하므로 같은 날짜 검사를 다시 실행해도 중복 증가하지 않습니다. `check-slack.yml`은 자동 발급되는 `GITHUB_TOKEN`으로 파일을 갱신하며 `contents: write` 권한을 사용합니다. 별도 GitHub Secret 등록은 필요하지 않습니다.
+
 ## 로컬 실행
 
 ```bash
@@ -53,7 +56,7 @@ pip install requests
 
 SLACK_BOT_TOKEN=xoxb-... python send_slack.py
 SLACK_BOT_TOKEN=xoxb-... python midnight_report.py
-SLACK_BOT_TOKEN=xoxb-... python check_slack.py
+SLACK_BOT_TOKEN=xoxb-... GITHUB_TOKEN=... GITHUB_REPOSITORY=yang5864/Slack-msg python check_slack.py
 ```
 
 테스트:
@@ -69,6 +72,8 @@ python -m unittest discover -s tests -v
 - `send_slack.py`: 아침 인증글
 - `midnight_report.py`: 자정 중간 점검
 - `check_slack.py`: 다음날 최종 검사
+- `miss_tracker.py`: 날짜별 미제출 이력 저장과 누적 횟수 계산
+- `miss_counts.v2.json`: 2기 미제출 이력
 - `state.v1.json`: 1기 종료 시점 상태의 읽기 전용 보관본
 
-2기에는 누적 벌금과 면제권 횟수 제한이 없으므로 상태 파일이나 GitHub Contents API를 사용하지 않습니다. Gemini 기반 알고리즘 마스터 선정도 2기 운영 흐름에서는 제외했습니다.
+2기에는 누적 벌금 증액과 면제권 횟수 제한이 없습니다. 미제출 횟수만 기록하며 Gemini 기반 알고리즘 마스터 선정은 하지 않습니다.

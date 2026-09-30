@@ -3,6 +3,13 @@ name: Slack Missing Check
 on:
     workflow_dispatch: # cron-job.org에서 찌를 수 있도록 수동 실행 열어두기
 
+permissions:
+    contents: write
+
+concurrency:
+    group: study-miss-counts
+    cancel-in-progress: false
+
 jobs:
     check-and-notify:
         runs-on: ubuntu-latest
@@ -23,4 +30,5 @@ jobs:
             - name: Run check script
               env:
                   SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: python check_slack.py

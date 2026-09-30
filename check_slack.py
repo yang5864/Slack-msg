@@ -11,6 +11,7 @@ from config import (
     STUDY_START_DATE,
     VALID_EXEMPTION_REASON_KEYWORDS,
 )
+from miss_tracker import record_misses
 from slack_utils import channel_history, has_image, is_test_message, post_message, thread_replies
 
 
@@ -150,6 +151,7 @@ def check_and_notify(now=None):
         user_id for user_id in MEMBERS
         if user_id not in submitted_at and user_id not in exempt_users
     ]
+    miss_counts = record_misses(target, missing)
 
     if not missing:
         ranked = sorted(submitted_at.items(), key=lambda item: item[1])
@@ -174,17 +176,18 @@ def check_and_notify(now=None):
         )
     else:
         fine_lines = [
-            f"  • <@{user_id}> ({MEMBERS[user_id]}): *{FIXED_FINE_AMOUNT:,}원*"
+            f"  • <@{user_id}> ({MEMBERS[user_id]}): 이번 *{FIXED_FINE_AMOUNT:,}원* · 누적 *{miss_counts[user_id]}회*"
             for user_id in missing
         ]
         total = len(missing) * FIXED_FINE_AMOUNT
         text = (
             f"🚨 *[{target_str} 분량] 인증 마감* 🚨\n"
             "마감 시간(오전 9시 9분)이 지났습니다.\n\n"
-            f"💸 *미제출 벌금: 1인당 {FIXED_FINE_AMOUNT:,}원*\n"
+            f"💸 *이번 미제출 기록: 1인당 {FIXED_FINE_AMOUNT:,}원*\n"
             + "\n".join(fine_lines)
-            + f"\n\n총액: *{total:,}원*\n"
-            "카카오뱅크 `3333-32-8918252`"
+            + f"\n\n이번 발생액 합계: *{total:,}원*\n"
+            "지금 송금하지 않아도 됩니다. 미제출 횟수를 기록해 두었다가 "
+            "추후 회식·모임 비용을 나눌 때 한 번에 정산할게요."
             + exemption_summary
         )
 
