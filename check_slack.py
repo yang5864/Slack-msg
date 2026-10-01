@@ -66,6 +66,20 @@ def build_exemption_summary(approved, rejected):
     return "".join(sections)
 
 
+def build_cumulative_fine_summary(members, miss_counts):
+    lines = [
+        f"  • <@{user_id}> ({name}): {miss_counts.get(user_id, 0)}회 · "
+        f"*{miss_counts.get(user_id, 0) * FIXED_FINE_AMOUNT:,}원*"
+        for user_id, name in members.items()
+    ]
+    total = sum(miss_counts.values()) * FIXED_FINE_AMOUNT
+    return (
+        "\n\n📒 *누적 벌금 현황*\n"
+        + "\n".join(lines)
+        + f"\n*전체 누적 벌금액: {total:,}원*"
+    )
+
+
 def check_and_notify(now=None):
     now = now or datetime.now(KST)
     target = (now - timedelta(days=1)).date()
@@ -142,9 +156,11 @@ def check_and_notify(now=None):
     exemption_summary = build_exemption_summary(approved, rejected)
 
     if target in FULL_EXEMPT_DATES:
+        miss_counts = record_misses(target, [])
         post_message(
             f"📋 *[{target_str} 분량] 전원 면제일*\n"
             f"{FULL_EXEMPT_DATES[target]} — 벌금 없이 마감합니다."
+            + build_cumulative_fine_summary(members, miss_counts)
         )
         print(f"{target_str} 전원 면제일 마감 안내 완료.")
         return
@@ -154,6 +170,7 @@ def check_and_notify(now=None):
         if user_id not in submitted_at and user_id not in exempt_users
     ]
     miss_counts = record_misses(target, missing)
+    cumulative_summary = build_cumulative_fine_summary(members, miss_counts)
 
     if not missing:
         ranked = sorted(submitted_at.items(), key=lambda item: item[1])
@@ -175,10 +192,11 @@ def check_and_notify(now=None):
             "모두 고생 많으셨습니다! 오늘 하루도 화이팅입니다 💪"
             + highlight
             + exemption_summary
+            + cumulative_summary
         )
     else:
         fine_lines = [
-            f"  • <@{user_id}> ({members[user_id]}): 이번 *{FIXED_FINE_AMOUNT:,}원* · 누적 *{miss_counts[user_id]}회*"
+            f"  • <@{user_id}> ({members[user_id]}): 이번 *{FIXED_FINE_AMOUNT:,}원*"
             for user_id in missing
         ]
         total = len(missing) * FIXED_FINE_AMOUNT
@@ -191,6 +209,7 @@ def check_and_notify(now=None):
             "지금 송금하지 않아도 됩니다. 미제출 횟수를 기록해 두었다가 "
             "추후 회식·모임 비용을 나눌 때 한 번에 정산할게요."
             + exemption_summary
+            + cumulative_summary
         )
 
     post_message(text)

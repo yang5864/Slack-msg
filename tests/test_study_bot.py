@@ -58,6 +58,7 @@ class StudyBotTests(unittest.TestCase):
     def test_holiday_morning_post_does_not_suppress_final_notice(
         self, history, _replies, post_message, record_misses
     ):
+        record_misses.return_value = {}
         history.return_value = [{
             "ts": "100.0",
             "text": send_slack.build_morning_message(date(2026, 10, 5)),
@@ -65,10 +66,10 @@ class StudyBotTests(unittest.TestCase):
 
         check_slack.check_and_notify(datetime(2026, 10, 6, 9, 9, tzinfo=KST))
 
-        post_message.assert_called_once_with(
-            "📋 *[10월 05일 분량] 전원 면제일*\n개천절 대체공휴일 — 벌금 없이 마감합니다."
-        )
-        record_misses.assert_not_called()
+        message = post_message.call_args.args[0]
+        self.assertIn("📋 *[10월 05일 분량] 전원 면제일*", message)
+        self.assertIn("*전체 누적 벌금액: 0원*", message)
+        record_misses.assert_called_once_with(date(2026, 10, 5), [])
 
     def test_exemption_reason_parsing_and_judging(self):
         reason = check_slack.extract_exemption_reason("면제권 사용(사유: 병원 진료)")
@@ -103,12 +104,40 @@ class StudyBotTests(unittest.TestCase):
 
         message = post_message.call_args.args[0]
         self.assertIn("1인당 1,000원", message)
-        self.assertIn("누적 *2회*", message)
+        self.assertIn(f"<@{member_ids[2]}> ({MEMBERS[member_ids[2]]}): 2회 · *2,000원*", message)
         self.assertIn("이번 발생액 합계: *5,000원*", message)
+        self.assertIn("*전체 누적 벌금액: 14,000원*", message)
         self.assertIn("지금 송금하지 않아도 됩니다", message)
         self.assertNotIn("카카오뱅크", message)
         self.assertIn("면제권 승인 (횟수 제한 없음)", message)
         record_misses.assert_called_once_with(date(2026, 10, 1), member_ids[2:])
+
+    @patch("check_slack.record_misses")
+    @patch("check_slack.post_message")
+    @patch("check_slack.thread_replies")
+    @patch("check_slack.channel_history")
+    def test_all_submitted_notice_includes_cumulative_amount(
+        self, history, replies, post_message, record_misses
+    ):
+        member_ids = list(active_members(date(2026, 10, 1)))
+        history.return_value = [{"ts": "100.0", "text": "*[10월 01일] 오늘의 인증!*"}]
+        replies.return_value = [
+            {"ts": "100.0", "text": "parent"},
+            *[
+                {"ts": str(101 + index), "user": user_id, "files": [{"mimetype": "image/png"}]}
+                for index, user_id in enumerate(member_ids)
+            ],
+        ]
+        record_misses.return_value = {member_ids[0]: 2, member_ids[1]: 1}
+
+        check_slack.check_and_notify(datetime(2026, 10, 2, 9, 9, tzinfo=KST))
+
+        message = post_message.call_args.args[0]
+        self.assertIn("전원 제출 완료", message)
+        self.assertIn(f"<@{member_ids[0]}> ({MEMBERS[member_ids[0]]}): 2회 · *2,000원*", message)
+        self.assertIn(f"<@{member_ids[2]}> ({MEMBERS[member_ids[2]]}): 0회 · *0원*", message)
+        self.assertIn("*전체 누적 벌금액: 3,000원*", message)
+        record_misses.assert_called_once_with(date(2026, 10, 1), [])
 
     def test_miss_counts_are_derived_from_dated_records(self):
         records = {
