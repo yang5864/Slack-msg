@@ -16,10 +16,24 @@ MEMBERS = {
     "U0C64JQ3QRE": "권유현",
     "U0C5C69MPKK": "송준수",
     "U0C5A3T04UA": "오진호",
+    "U0C6VD4LY3S": "김수현",
+    "U0C5SPBRHKQ": "홍상우",
 }
 
-# Slack 참여 후 ID를 MEMBERS에 옮긴다.
-PENDING_MEMBERS = ("김수현", "홍상우")
+# 새로 합류한 멤버는 가입일 이후 분량부터 검사한다.
+MEMBER_START_DATES = {
+    "U0C6VD4LY3S": date(2026, 10, 2),
+    "U0C5SPBRHKQ": date(2026, 10, 2),
+}
+
+PENDING_MEMBERS = ()
+
+
+def active_members(target_date):
+    return {
+        user_id: name for user_id, name in MEMBERS.items()
+        if target_date >= MEMBER_START_DATES.get(user_id, STUDY_START_DATE)
+    }
 
 # 2026년 10~12월 평일 공휴일. 주말은 정기 검사 대상이 아니므로 제외한다.
 FULL_EXEMPT_DATES = {

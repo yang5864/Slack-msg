@@ -12,7 +12,15 @@ import midnight_report
 import miss_tracker
 import send_slack
 import test_notifications
-from config import FIXED_FINE_AMOUNT, FULL_EXEMPT_DATES, MEMBERS, SLACK_CHANNEL_ID, STUDY_START_DATE
+from config import (
+    FIXED_FINE_AMOUNT,
+    FULL_EXEMPT_DATES,
+    MEMBERS,
+    PENDING_MEMBERS,
+    SLACK_CHANNEL_ID,
+    STUDY_START_DATE,
+    active_members,
+)
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -23,7 +31,12 @@ class StudyBotTests(unittest.TestCase):
         self.assertEqual(SLACK_CHANNEL_ID, "C0C562P5YK0")
         self.assertEqual(STUDY_START_DATE, date(2026, 10, 1))
         self.assertEqual(FIXED_FINE_AMOUNT, 1_000)
-        self.assertEqual(len(MEMBERS), 7)
+        self.assertEqual(len(MEMBERS), 9)
+        self.assertEqual(PENDING_MEMBERS, ())
+        self.assertEqual(MEMBERS["U0C6VD4LY3S"], "김수현")
+        self.assertEqual(MEMBERS["U0C5SPBRHKQ"], "홍상우")
+        self.assertEqual(len(active_members(date(2026, 10, 1))), 7)
+        self.assertEqual(len(active_members(date(2026, 10, 2))), 9)
 
     def test_morning_message_describes_unlimited_exemptions(self):
         message = send_slack.build_morning_message(date(2026, 10, 1))
@@ -68,7 +81,7 @@ class StudyBotTests(unittest.TestCase):
     @patch("check_slack.thread_replies")
     @patch("check_slack.channel_history")
     def test_each_missing_member_is_charged_fixed_fine(self, history, replies, post_message, record_misses):
-        member_ids = list(MEMBERS)
+        member_ids = list(active_members(date(2026, 10, 1)))
         record_misses.return_value = {user_id: 2 for user_id in member_ids}
         history.return_value = [{"ts": "100.0", "text": "*[10월 01일] 오늘의 인증!*"}]
         replies.return_value = [

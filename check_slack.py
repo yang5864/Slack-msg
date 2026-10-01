@@ -5,11 +5,11 @@ from zoneinfo import ZoneInfo
 from config import (
     FIXED_FINE_AMOUNT,
     FULL_EXEMPT_DATES,
-    MEMBERS,
     REJECT_EXEMPTION_REASON_KEYWORDS,
     SERVICE_END_DATE,
     STUDY_START_DATE,
     VALID_EXEMPTION_REASON_KEYWORDS,
+    active_members,
 )
 from miss_tracker import record_misses
 from slack_utils import channel_history, has_image, is_test_message, post_message, thread_replies
@@ -78,6 +78,8 @@ def check_and_notify(now=None):
         print(f"2기 종료일({SERVICE_END_DATE}) 이후 분량이므로 검사를 생략합니다.")
         return
 
+    members = active_members(target)
+
     target_9am = datetime.combine(target, datetime.min.time(), tzinfo=KST).replace(hour=9)
     messages = [
         message for message in channel_history(str(target_9am.timestamp()))
@@ -112,7 +114,7 @@ def check_and_notify(now=None):
         if reply.get("ts") == parent["ts"]:
             continue
         user_id = reply.get("user")
-        if user_id not in MEMBERS:
+        if user_id not in members:
             continue
 
         reply_ts = float(reply["ts"])
@@ -148,7 +150,7 @@ def check_and_notify(now=None):
         return
 
     missing = [
-        user_id for user_id in MEMBERS
+        user_id for user_id in members
         if user_id not in submitted_at and user_id not in exempt_users
     ]
     miss_counts = record_misses(target, missing)
@@ -176,7 +178,7 @@ def check_and_notify(now=None):
         )
     else:
         fine_lines = [
-            f"  • <@{user_id}> ({MEMBERS[user_id]}): 이번 *{FIXED_FINE_AMOUNT:,}원* · 누적 *{miss_counts[user_id]}회*"
+            f"  • <@{user_id}> ({members[user_id]}): 이번 *{FIXED_FINE_AMOUNT:,}원* · 누적 *{miss_counts[user_id]}회*"
             for user_id in missing
         ]
         total = len(missing) * FIXED_FINE_AMOUNT
