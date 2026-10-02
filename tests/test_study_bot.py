@@ -35,7 +35,7 @@ class StudyBotTests(unittest.TestCase):
         self.assertEqual(PENDING_MEMBERS, ())
         self.assertEqual(MEMBERS["U0C6VD4LY3S"], "김수현")
         self.assertEqual(MEMBERS["U0C5SPBRHKQ"], "홍상우")
-        self.assertEqual(len(active_members(date(2026, 10, 1))), 7)
+        self.assertEqual(len(active_members(date(2026, 10, 1))), 9)
         self.assertEqual(len(active_members(date(2026, 10, 2))), 9)
 
     def test_morning_message_describes_unlimited_exemptions(self):
@@ -83,7 +83,8 @@ class StudyBotTests(unittest.TestCase):
     @patch("check_slack.channel_history")
     def test_each_missing_member_is_charged_fixed_fine(self, history, replies, post_message, record_misses):
         member_ids = list(active_members(date(2026, 10, 1)))
-        record_misses.return_value = {user_id: 2 for user_id in member_ids}
+        record_misses.return_value = {user_id: 2 for user_id in member_ids[:7]}
+        record_misses.return_value["U0C5SPBRHKQ"] = 1
         history.return_value = [{"ts": "100.0", "text": "*[10월 01일] 오늘의 인증!*"}]
         replies.return_value = [
             {"ts": "100.0", "text": "parent"},
@@ -98,6 +99,11 @@ class StudyBotTests(unittest.TestCase):
                 "text": "면제권 사용(사유: 병원 진료)",
                 "files": [],
             },
+            {
+                "ts": "103.0",
+                "user": "U0C6VD4LY3S",
+                "files": [{"mimetype": "image/png"}],
+            },
         ]
 
         check_slack.check_and_notify(datetime(2026, 10, 2, 9, 9, tzinfo=KST))
@@ -105,16 +111,16 @@ class StudyBotTests(unittest.TestCase):
         message = post_message.call_args.args[0]
         self.assertIn("1인당 1,000원", message)
         self.assertIn(f"<@{member_ids[2]}> ({MEMBERS[member_ids[2]]}): 2회 · *2,000원*", message)
-        self.assertIn("이번 발생액 합계: *5,000원*", message)
-        self.assertIn("*전체 누적 벌금액: 14,000원*", message)
+        self.assertIn("이번 발생액 합계: *6,000원*", message)
+        self.assertIn("*전체 누적 벌금액: 15,000원*", message)
         self.assertIn("<@U0C6VD4LY3S> (김수현): 0회 · *0원*", message)
-        self.assertIn("<@U0C5SPBRHKQ> (홍상우): 0회 · *0원*", message)
+        self.assertIn("<@U0C5SPBRHKQ> (홍상우): 1회 · *1,000원*", message)
         self.assertNotIn("<@U0C6VD4LY3S> (김수현): 이번", message)
-        self.assertNotIn("<@U0C5SPBRHKQ> (홍상우): 이번", message)
+        self.assertIn("<@U0C5SPBRHKQ> (홍상우): 이번 *1,000원*", message)
         self.assertIn("지금 송금하지 않아도 됩니다", message)
         self.assertNotIn("카카오뱅크", message)
         self.assertIn("면제권 승인 (횟수 제한 없음)", message)
-        record_misses.assert_called_once_with(date(2026, 10, 1), member_ids[2:])
+        record_misses.assert_called_once_with(date(2026, 10, 1), member_ids[2:7] + [member_ids[8]])
 
     @patch("check_slack.record_misses")
     @patch("check_slack.post_message")

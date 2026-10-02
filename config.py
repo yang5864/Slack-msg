@@ -20,10 +20,10 @@ MEMBERS = {
     "U0C5SPBRHKQ": "홍상우",
 }
 
-# 새로 합류한 멤버는 가입일 이후 분량부터 검사한다.
+# 멤버별 검사 시작일. 김수현·홍상우도 2기 첫날부터 참여했다.
 MEMBER_START_DATES = {
-    "U0C6VD4LY3S": date(2026, 10, 2),
-    "U0C5SPBRHKQ": date(2026, 10, 2),
+    "U0C6VD4LY3S": date(2026, 10, 1),
+    "U0C5SPBRHKQ": date(2026, 10, 1),
 }
 
 PENDING_MEMBERS = ()
