@@ -67,13 +67,13 @@ def build_exemption_summary(approved, rejected):
     return "".join(sections)
 
 
-def build_cumulative_fine_summary(miss_counts):
+def build_cumulative_fine_summary(fine_amounts):
     lines = [
-        f"  • <@{user_id}> ({name}): {miss_counts.get(user_id, 0)}회 · "
-        f"*{miss_counts.get(user_id, 0) * FIXED_FINE_AMOUNT:,}원*"
+        f"  • <@{user_id}> ({name}): {fine_amounts.get(name, 0) // FIXED_FINE_AMOUNT}회 · "
+        f"*{fine_amounts.get(name, 0):,}원*"
         for user_id, name in MEMBERS.items()
     ]
-    total = sum(miss_counts.values()) * FIXED_FINE_AMOUNT
+    total = sum(fine_amounts.values())
     return (
         "\n\n📒 *누적 벌금 현황*\n"
         + "\n".join(lines)
@@ -157,11 +157,11 @@ def check_and_notify(now=None):
     exemption_summary = build_exemption_summary(approved, rejected)
 
     if target in FULL_EXEMPT_DATES:
-        miss_counts = record_misses(target, [])
+        fine_amounts = record_misses(target, [])
         post_message(
             f"📋 *[{target_str} 분량] 전원 면제일*\n"
             f"{FULL_EXEMPT_DATES[target]} — 벌금 없이 마감합니다."
-            + build_cumulative_fine_summary(miss_counts)
+            + build_cumulative_fine_summary(fine_amounts)
         )
         print(f"{target_str} 전원 면제일 마감 안내 완료.")
         return
@@ -170,8 +170,8 @@ def check_and_notify(now=None):
         user_id for user_id in members
         if user_id not in submitted_at and user_id not in exempt_users
     ]
-    miss_counts = record_misses(target, missing)
-    cumulative_summary = build_cumulative_fine_summary(miss_counts)
+    fine_amounts = record_misses(target, missing)
+    cumulative_summary = build_cumulative_fine_summary(fine_amounts)
 
     if not missing:
         ranked = sorted(submitted_at.items(), key=lambda item: item[1])
@@ -207,7 +207,7 @@ def check_and_notify(now=None):
             f"💸 *이번 미제출 기록: 1인당 {FIXED_FINE_AMOUNT:,}원*\n"
             + "\n".join(fine_lines)
             + f"\n\n이번 발생액 합계: *{total:,}원*\n"
-            "지금 송금하지 않아도 됩니다. 미제출 횟수를 기록해 두었다가 "
+            "지금 송금하지 않아도 됩니다. 누적 벌금액을 기록해 두었다가 "
             "추후 회식·모임 비용을 나눌 때 한 번에 정산할게요."
             + exemption_summary
             + cumulative_summary

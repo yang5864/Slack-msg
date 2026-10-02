@@ -83,8 +83,8 @@ class StudyBotTests(unittest.TestCase):
     @patch("check_slack.channel_history")
     def test_each_missing_member_is_charged_fixed_fine(self, history, replies, post_message, record_misses):
         member_ids = list(active_members(date(2026, 10, 1)))
-        record_misses.return_value = {user_id: 2 for user_id in member_ids[:7]}
-        record_misses.return_value["U0C5SPBRHKQ"] = 1
+        record_misses.return_value = {MEMBERS[user_id]: 2_000 for user_id in member_ids[:7]}
+        record_misses.return_value["홍상우"] = 1_000
         history.return_value = [{"ts": "100.0", "text": "*[10월 01일] 오늘의 인증!*"}]
         replies.return_value = [
             {"ts": "100.0", "text": "parent"},
@@ -138,7 +138,7 @@ class StudyBotTests(unittest.TestCase):
                 for index, user_id in enumerate(member_ids)
             ],
         ]
-        record_misses.return_value = {member_ids[0]: 2, member_ids[1]: 1}
+        record_misses.return_value = {MEMBERS[member_ids[0]]: 2_000, MEMBERS[member_ids[1]]: 1_000}
 
         check_slack.check_and_notify(datetime(2026, 10, 2, 9, 9, tzinfo=KST))
 
@@ -149,38 +149,57 @@ class StudyBotTests(unittest.TestCase):
         self.assertIn("*전체 누적 벌금액: 3,000원*", message)
         record_misses.assert_called_once_with(date(2026, 10, 1), [])
 
-    def test_miss_counts_are_derived_from_dated_records(self):
-        records = {
-            "2026-10-01": ["U1", "U2"],
-            "2026-10-02": ["U1"],
-            "2026-10-05": [],
-        }
-        self.assertEqual(miss_tracker.count_misses(records), {"U1": 2, "U2": 1})
+    def test_amount_file_has_names_and_won_values(self):
+        with open(miss_tracker.STATE_PATH, encoding="utf-8") as state_file:
+            amounts = json.load(state_file)
+        self.assertEqual(set(amounts), set(MEMBERS.values()))
+        self.assertTrue(all(type(amount) is int and amount >= 0 and amount % 1_000 == 0
+                            for amount in amounts.values()))
 
-    @patch("miss_tracker.load_records")
-    def test_repeat_check_does_not_increase_count(self, load_records):
-        load_records.return_value = ({"2026-10-01": ["U1"]}, "existing-sha")
-        self.assertEqual(miss_tracker.record_misses(date(2026, 10, 1), ["U1"]), {"U1": 1})
-
-    @patch("miss_tracker.load_records")
-    def test_repeat_check_with_changed_result_requires_manual_review(self, load_records):
-        load_records.return_value = ({"2026-10-01": ["U1"]}, "existing-sha")
-        with self.assertRaises(RuntimeError):
-            miss_tracker.record_misses(date(2026, 10, 1), ["U2"])
+    @patch("miss_tracker._already_recorded", return_value=True)
+    @patch("miss_tracker.load_amounts", return_value=({"홍상우": 1_000}, "existing-sha"))
+    def test_repeat_check_does_not_increase_amount(self, _load_amounts, _already_recorded):
+        self.assertEqual(
+            miss_tracker.record_misses(date(2026, 10, 1), ["U0C5SPBRHKQ"]),
+            {"홍상우": 1_000},
+        )
 
     @patch("miss_tracker._github_context", return_value=("test-token", "owner/repo"))
-    @patch("miss_tracker.load_records", return_value=({}, "existing-sha"))
-    def test_new_miss_record_is_saved_once(self, _load_records, _github_context):
+    @patch("miss_tracker.load_amounts", return_value=({"홍상우": 1_000}, "existing-sha"))
+    @patch("miss_tracker._already_recorded", return_value=False)
+    def test_new_miss_adds_fixed_amount(self, _already_recorded, _load_amounts, _github_context):
         response = SimpleNamespace(raise_for_status=lambda: None)
         fake_requests = SimpleNamespace(put=unittest.mock.Mock(return_value=response))
         with patch.dict(sys.modules, {"requests": fake_requests}):
-            counts = miss_tracker.record_misses(date(2026, 10, 1), ["U2", "U1"])
+            amounts = miss_tracker.record_misses(date(2026, 10, 2), ["U0C5SPBRHKQ", "U0C6VD4LY3S"])
 
-        self.assertEqual(counts, {"U1": 1, "U2": 1})
+        self.assertEqual(amounts, {"홍상우": 2_000, "김수현": 1_000})
         payload = fake_requests.put.call_args.kwargs["json"]
         saved = json.loads(base64.b64decode(payload["content"]))
-        self.assertEqual(saved, {"missed_dates": {"2026-10-01": ["U1", "U2"]}})
+        self.assertEqual(saved, {"홍상우": 2_000, "김수현": 1_000})
         self.assertEqual(payload["sha"], "existing-sha")
+
+    @patch("miss_tracker._github_context", return_value=("test-token", "owner/repo"))
+    def test_commit_history_prevents_double_charge_and_detects_changed_result(self, _github_context):
+        response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: [{"commit": {"message": "Record study fines for 2026-10-02: 홍상우"}}],
+        )
+        fake_requests = SimpleNamespace(get=unittest.mock.Mock(return_value=response))
+        with patch.dict(sys.modules, {"requests": fake_requests}):
+            self.assertTrue(miss_tracker._already_recorded(date(2026, 10, 2), ["홍상우"]))
+            with self.assertRaises(RuntimeError):
+                miss_tracker._already_recorded(date(2026, 10, 2), ["김수현"])
+
+    @patch("miss_tracker._github_context", return_value=("test-token", "owner/repo"))
+    def test_migrated_legacy_record_is_not_charged_again(self, _github_context):
+        response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: [{"commit": {"message": "Record study misses for 2026-10-01"}}],
+        )
+        fake_requests = SimpleNamespace(get=unittest.mock.Mock(return_value=response))
+        with patch.dict(sys.modules, {"requests": fake_requests}):
+            self.assertTrue(miss_tracker._already_recorded(date(2026, 10, 1), ["홍상우"]))
 
     @patch("test_notifications.post_message")
     def test_three_test_messages_are_clearly_marked(self, post_message):
