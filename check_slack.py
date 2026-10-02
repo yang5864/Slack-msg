@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from config import (
     FIXED_FINE_AMOUNT,
     FULL_EXEMPT_DATES,
+    MEMBERS,
     REJECT_EXEMPTION_REASON_KEYWORDS,
     SERVICE_END_DATE,
     STUDY_START_DATE,
@@ -66,11 +67,11 @@ def build_exemption_summary(approved, rejected):
     return "".join(sections)
 
 
-def build_cumulative_fine_summary(members, miss_counts):
+def build_cumulative_fine_summary(miss_counts):
     lines = [
         f"  • <@{user_id}> ({name}): {miss_counts.get(user_id, 0)}회 · "
         f"*{miss_counts.get(user_id, 0) * FIXED_FINE_AMOUNT:,}원*"
-        for user_id, name in members.items()
+        for user_id, name in MEMBERS.items()
     ]
     total = sum(miss_counts.values()) * FIXED_FINE_AMOUNT
     return (
@@ -160,7 +161,7 @@ def check_and_notify(now=None):
         post_message(
             f"📋 *[{target_str} 분량] 전원 면제일*\n"
             f"{FULL_EXEMPT_DATES[target]} — 벌금 없이 마감합니다."
-            + build_cumulative_fine_summary(members, miss_counts)
+            + build_cumulative_fine_summary(miss_counts)
         )
         print(f"{target_str} 전원 면제일 마감 안내 완료.")
         return
@@ -170,7 +171,7 @@ def check_and_notify(now=None):
         if user_id not in submitted_at and user_id not in exempt_users
     ]
     miss_counts = record_misses(target, missing)
-    cumulative_summary = build_cumulative_fine_summary(members, miss_counts)
+    cumulative_summary = build_cumulative_fine_summary(miss_counts)
 
     if not missing:
         ranked = sorted(submitted_at.items(), key=lambda item: item[1])
