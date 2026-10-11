@@ -42,6 +42,9 @@ class StudyBotTests(unittest.TestCase):
         message = send_slack.build_morning_message(date(2026, 10, 1))
         self.assertIn("10월 01일", message)
         self.assertIn("횟수 제한 없이", message)
+        self.assertIn("`면제권 사용`", message)
+        self.assertIn("면제 사유 관련 이미지를 올려도 이미지 제출로 인증 처리", message)
+        self.assertNotIn("면제권 사용(사유:", message)
 
     def test_weekday_holidays_are_exempt(self):
         self.assertEqual(FULL_EXEMPT_DATES, {
@@ -71,11 +74,10 @@ class StudyBotTests(unittest.TestCase):
         self.assertIn("*전체 누적 벌금액: 0원*", message)
         record_misses.assert_called_once_with(date(2026, 10, 5), [])
 
-    def test_exemption_reason_parsing_and_judging(self):
-        reason = check_slack.extract_exemption_reason("면제권 사용(사유: 병원 진료)")
-        self.assertEqual(reason, "병원 진료")
-        self.assertTrue(check_slack.judge_exemption_reason(reason)[0])
-        self.assertFalse(check_slack.judge_exemption_reason("게임하고 싶음")[0])
+    def test_exemption_request_needs_no_reason(self):
+        self.assertTrue(check_slack.is_exemption_request("면제권 사용"))
+        self.assertTrue(check_slack.is_exemption_request("면제권 사용(사유: 게임)"))
+        self.assertFalse(check_slack.is_exemption_request("면제권 사용법 알려줘"))
 
     @patch("check_slack.record_misses")
     @patch("check_slack.post_message")
@@ -91,12 +93,13 @@ class StudyBotTests(unittest.TestCase):
             {
                 "ts": "101.0",
                 "user": member_ids[0],
+                "text": "병원 진료 확인서",
                 "files": [{"mimetype": "image/png"}],
             },
             {
                 "ts": "102.0",
                 "user": member_ids[1],
-                "text": "면제권 사용(사유: 병원 진료)",
+                "text": "면제권 사용",
                 "files": [],
             },
             {
@@ -119,7 +122,9 @@ class StudyBotTests(unittest.TestCase):
         self.assertIn("<@U0C5SPBRHKQ> (홍상우): 이번 *1,000원*", message)
         self.assertIn("지금 송금하지 않아도 됩니다", message)
         self.assertNotIn("카카오뱅크", message)
-        self.assertIn("면제권 승인 (횟수 제한 없음)", message)
+        self.assertIn("면제권 사용 (횟수 제한 없음)", message)
+        self.assertIn(f"  • <@{member_ids[1]}>", message)
+        self.assertNotIn(f"  • <@{member_ids[0]}>\n", message)
         record_misses.assert_called_once_with(date(2026, 10, 1), member_ids[2:7] + [member_ids[8]])
 
     @patch("check_slack.record_misses")

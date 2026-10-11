@@ -6,10 +6,8 @@ from config import (
     FIXED_FINE_AMOUNT,
     FULL_EXEMPT_DATES,
     MEMBERS,
-    REJECT_EXEMPTION_REASON_KEYWORDS,
     SERVICE_END_DATE,
     STUDY_START_DATE,
-    VALID_EXEMPTION_REASON_KEYWORDS,
     active_members,
 )
 from miss_tracker import record_misses
@@ -19,29 +17,9 @@ from slack_utils import channel_history, has_image, is_test_message, post_messag
 KST = ZoneInfo("Asia/Seoul")
 
 
-def extract_exemption_reason(text: str):
-    """면제권 댓글이면 사유 문자열을, 아니면 None을 반환한다."""
-    normalized = " ".join((text or "").split())
-    if "면제권" not in normalized:
-        return None
-
-    reason = re.sub(r"면제권\s*[가-힣a-zA-Z]*[.。,]?\s*", "", normalized)
-    reason = re.sub(r"사유\s*[:：-]?\s*", "", reason)
-    return reason.strip(" ():-")
-
-
-def judge_exemption_reason(reason: str):
-    """1기와 같은 사유 기준을 적용한다. 사용 횟수 제한은 없다."""
-    trimmed = (reason or "").strip()
-    if len(trimmed) < 2:
-        return False, "사유가 비어 있거나 너무 짧아요"
-
-    normalized = re.sub(r"\s+", "", trimmed).lower()
-    if any(keyword in normalized for keyword in REJECT_EXEMPTION_REASON_KEYWORDS):
-        return False, "개인 여가성 사유는 자동 승인 대상이 아니에요"
-    if any(keyword in normalized for keyword in VALID_EXEMPTION_REASON_KEYWORDS):
-        return True, "합당한 사유로 판단했어요"
-    return False, "질병·시험·공적 일정 계열 사유로 보기 어려워 자동 승인하지 않았어요"
+def is_exemption_request(text: str):
+    """'면제권 사용'과 기존 괄호형 댓글을 사유 검사 없이 인정한다."""
+    return bool(re.fullmatch(r"면제권\s*사용(?:\s*\(.*\))?", (text or "").strip()))
 
 
 def format_submit_time(timestamp: float, target_date) -> str:
@@ -53,18 +31,11 @@ def format_submit_time(timestamp: float, target_date) -> str:
     return f"{day_label} {ampm} {hour}시{minute}"
 
 
-def build_exemption_summary(approved, rejected):
-    sections = []
-    if approved:
-        lines = [f"  • <@{item['user_id']}>: {item['reason']}" for item in approved]
-        sections.append("\n\n🎟️ *면제권 승인 (횟수 제한 없음)*\n" + "\n".join(lines))
-    if rejected:
-        lines = [
-            f"  • <@{item['user_id']}>: {item['reason'] or '사유 미기재'} — {item['note']}"
-            for item in rejected
-        ]
-        sections.append("\n\n⚠️ *면제권 미승인*\n" + "\n".join(lines))
-    return "".join(sections)
+def build_exemption_summary(approved):
+    if not approved:
+        return ""
+    lines = [f"  • <@{user_id}>" for user_id in approved]
+    return "\n\n🎟️ *면제권 사용 (횟수 제한 없음)*\n" + "\n".join(lines)
 
 
 def build_cumulative_fine_summary(fine_amounts):
@@ -124,7 +95,7 @@ def check_and_notify(now=None):
         return
 
     submitted_at = {}
-    token_requests = {}
+    token_requests = set()
     for reply in thread_replies(parent["ts"]):
         if reply.get("ts") == parent["ts"]:
             continue
@@ -136,25 +107,12 @@ def check_and_notify(now=None):
         if has_image(reply):
             submitted_at[user_id] = min(reply_ts, submitted_at.get(user_id, reply_ts))
 
-        reason = extract_exemption_reason(reply.get("text", ""))
-        if reason is not None:
-            token_requests[user_id] = {"reason": reason, "ts": reply_ts}
+        if is_exemption_request(reply.get("text", "")):
+            token_requests.add(user_id)
 
-    approved = []
-    rejected = []
-    exempt_users = set()
-    for user_id, request in sorted(token_requests.items(), key=lambda item: item[1]["ts"]):
-        if user_id in submitted_at:
-            continue
-        accepted, note = judge_exemption_reason(request["reason"])
-        item = {"user_id": user_id, "reason": request["reason"], "note": note}
-        if accepted:
-            exempt_users.add(user_id)
-            approved.append(item)
-        else:
-            rejected.append(item)
-
-    exemption_summary = build_exemption_summary(approved, rejected)
+    approved = [user_id for user_id in members if user_id in token_requests and user_id not in submitted_at]
+    exempt_users = set(approved)
+    exemption_summary = build_exemption_summary(approved)
 
     if target in FULL_EXEMPT_DATES:
         fine_amounts = record_misses(target, [])
