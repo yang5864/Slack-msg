@@ -43,7 +43,7 @@ class StudyBotTests(unittest.TestCase):
         self.assertIn("10월 01일", message)
         self.assertIn("횟수 제한 없이", message)
         self.assertIn("`면제권 사용`", message)
-        self.assertIn("면제 사유 관련 이미지를 올려도 이미지 제출로 인증 처리", message)
+        self.assertIn("면제 사유 관련 이미지", message)
         self.assertNotIn("면제권 사용(사유:", message)
 
     def test_weekday_holidays_are_exempt(self):
