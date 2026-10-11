@@ -79,6 +79,17 @@ class StudyBotTests(unittest.TestCase):
         self.assertTrue(check_slack.is_exemption_request("면제권 사용(사유: 게임)"))
         self.assertFalse(check_slack.is_exemption_request("면제권 사용법 알려줘"))
 
+    def test_cumulative_fines_are_ranked_descending_with_stable_ties(self):
+        message = check_slack.build_cumulative_fine_summary({"홍상우": 3_000, "김수현": 2_000, "이지민": 2_000})
+        lines = [line.strip() for line in message.splitlines() if "<@" in line]
+        self.assertEqual(len(lines), 9)
+        self.assertTrue(lines[0].startswith("1. <@U0C5SPBRHKQ>"))
+        self.assertTrue(lines[1].startswith("2. <@U0C5FH37PL4>"))
+        self.assertTrue(lines[2].startswith("3. <@U0C6VD4LY3S>"))
+        self.assertTrue(lines[3].startswith("4. <@U0BGQCYEUD6>"))
+        self.assertTrue(lines[-1].startswith("9. <@U0C5A3T04UA>"))
+        self.assertIn("*전체 누적 벌금액: 7,000원*", message)
+
     @patch("check_slack.record_misses")
     @patch("check_slack.post_message")
     @patch("check_slack.thread_replies")

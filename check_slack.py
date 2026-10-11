@@ -39,10 +39,11 @@ def build_exemption_summary(approved):
 
 
 def build_cumulative_fine_summary(fine_amounts):
+    ranked_members = sorted(MEMBERS.items(), key=lambda item: fine_amounts.get(item[1], 0), reverse=True)
     lines = [
-        f"  • <@{user_id}> ({name}): {fine_amounts.get(name, 0) // FIXED_FINE_AMOUNT}회 · "
+        f"  {rank}. <@{user_id}> ({name}): {fine_amounts.get(name, 0) // FIXED_FINE_AMOUNT}회 · "
         f"*{fine_amounts.get(name, 0):,}원*"
-        for user_id, name in MEMBERS.items()
+        for rank, (user_id, name) in enumerate(ranked_members, start=1)
     ]
     total = sum(fine_amounts.values())
     return (
