@@ -1,4 +1,3 @@
-import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -18,8 +17,8 @@ KST = ZoneInfo("Asia/Seoul")
 
 
 def is_exemption_request(text: str):
-    """'면제권 사용'과 기존 괄호형 댓글을 사유 검사 없이 인정한다."""
-    return bool(re.fullmatch(r"면제권\s*사용(?:\s*\(.*\))?", (text or "").strip()))
+    """댓글에 '면제권 사용'이 포함되면 사유 검사 없이 인정한다."""
+    return "면제권 사용" in (text or "")
 
 
 def format_submit_time(timestamp: float, target_date) -> str:

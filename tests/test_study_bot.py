@@ -77,7 +77,9 @@ class StudyBotTests(unittest.TestCase):
     def test_exemption_request_needs_no_reason(self):
         self.assertTrue(check_slack.is_exemption_request("면제권 사용"))
         self.assertTrue(check_slack.is_exemption_request("면제권 사용(사유: 게임)"))
-        self.assertFalse(check_slack.is_exemption_request("면제권 사용법 알려줘"))
+        self.assertTrue(check_slack.is_exemption_request("면제권 사용 어제 못했네"))
+        self.assertTrue(check_slack.is_exemption_request("오늘은 면제권 사용 할게요"))
+        self.assertFalse(check_slack.is_exemption_request("오늘은 못했네"))
 
     def test_cumulative_fines_are_ranked_descending_with_stable_ties(self):
         message = check_slack.build_cumulative_fine_summary({"홍상우": 3_000, "김수현": 2_000, "이지민": 2_000})
@@ -110,7 +112,7 @@ class StudyBotTests(unittest.TestCase):
             {
                 "ts": "102.0",
                 "user": member_ids[1],
-                "text": "면제권 사용",
+                "text": "면제권 사용 어제 못했네",
                 "files": [],
             },
             {
